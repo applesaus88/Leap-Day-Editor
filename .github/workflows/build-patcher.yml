@@ -1,0 +1,101 @@
+name: Build patcher (Windows .exe + macOS .app)
+
+# Builds standalone patchers with a bundled JRE, so end users need no Python,
+# no Java, no Android SDK. Run from the Actions tab (or on every push); the
+# Windows .exe and macOS .app are uploaded as build artifacts.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Java (JRE to bundle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          java-package: jre
+
+      - name: Install Python deps
+        run: pip install -r patcher/requirements.txt
+
+      - name: Fetch signer jar
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor | Out-Null
+          if (-not (Test-Path vendor/uber-apk-signer.jar)) {
+            $u = "https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar"
+            Invoke-WebRequest -Uri $u -OutFile vendor/uber-apk-signer.jar
+          }
+
+      - name: Bundle JRE next to the app
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse -Force "$env:JAVA_HOME" jre
+          Write-Host "Bundled JRE from $env:JAVA_HOME"
+
+      - name: Build executable
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build_pyi patcher/patcher.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeapDayModPatcher-windows
+          path: dist/LeapDayModPatcher.exe
+          if-no-files-found: error
+
+  macos-app:
+    runs-on: macos-14          # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Java (JRE to bundle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          java-package: jre
+
+      - name: Install Python deps
+        run: pip install -r patcher/requirements.txt
+
+      - name: Fetch signer jar
+        run: |
+          mkdir -p vendor
+          if [ ! -f vendor/uber-apk-signer.jar ]; then
+            curl -sL -o vendor/uber-apk-signer.jar \
+              https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
+          fi
+
+      - name: Bundle JRE next to the app
+        run: |
+          cp -R "$JAVA_HOME" jre
+          echo "Bundled JRE from $JAVA_HOME"
+
+      - name: Build app
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build_pyi patcher/patcher.spec
+
+      - name: Zip .app
+        run: cd dist && zip -ry LeapDayModPatcher-macos.zip LeapDayModPatcher.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeapDayModPatcher-macos
+          path: dist/LeapDayModPatcher-macos.zip
+          if-no-files-found: error

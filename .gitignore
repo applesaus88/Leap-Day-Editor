@@ -1,0 +1,60 @@
+# =============================================================================
+# STRICT ALLOWLIST .gitignore
+# -----------------------------------------------------------------------------
+# Ignore EVERYTHING by default, then re-include only the source the editor needs
+# to run. Consequence: anything generated on first run/build, any dev tooling,
+# any captured/game-derived data, and any original game bytes are NEVER uploaded
+# -- even by accident. To ship a new top-level file/dir, add an explicit `!`.
+# NOTE: .gitignore has NO inline comments -- keep every `#` on its own line.
+# =============================================================================
+
+# ignore everything at the repo root
+/*
+
+# re-include the source folders the editor actually needs
+!/studio/
+!/core/
+!/tiles/
+!/patcher/
+!/examples/
+!/.github/
+
+# re-include top-level docs / config
+!/README.md
+!/NOTICE.md
+!/LICENSE
+!/requirements.txt
+!/.gitignore
+
+# strip generated files / OS junk INSIDE the re-included folders
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.DS_Store
+.DS_Store
+*.bak
+*.bak2
+*.log
+
+# generated on first run/build -- regenerated locally, shipped as release
+# assets, never committed
+core/native/prebuilt/
+jre/
+
+# NEVER commit game bytes / binaries / dev rigs (belt & suspenders, any path).
+# The mod ships ONLY user-authored content; the game is supplied at runtime.
+**/*.so
+**/*.so.src
+**/*.so.patched
+**/*.bin
+**/*.xapk
+**/*.apk
+**/*.apk.idsig
+**/*.unity3d
+**/*.unity3d.mod
+**/*.dat
+**/global-metadata.dat
+**/node_modules/
+**/*.node
+**/frida-server
+vendor/uber-apk-signer.jar

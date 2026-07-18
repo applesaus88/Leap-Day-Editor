@@ -1,0 +1,5 @@
+# Runtime deps for the standalone level-editor patcher.
+# (No capstone / TypeTreeGeneratorAPI: this tool edits text levels only and has
+#  no ability to disassemble or modify compiled code / serialized fields.)
+UnityPy==1.25.0
+pyinstaller==6.20.0

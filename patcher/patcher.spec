@@ -1,0 +1,56 @@
+# PyInstaller spec for the Leap Day Mod Patcher (one-file executable).
+# Build from the project root:  pyinstaller patcher/patcher.spec
+# Produces LeapDayModPatcher.exe on Windows and LeapDayModPatcher.app on macOS.
+import os
+import sys
+from PyInstaller.utils.hooks import collect_all
+from PyInstaller.building.datastruct import Tree
+
+ROOT = os.path.abspath(os.getcwd())
+IS_MAC = sys.platform == "darwin"
+
+datas, binaries, hiddenimports = [], [], []
+# only UnityPy (text-level editing). No capstone / TypeTreeGeneratorAPI: the
+# tool has no code path to disassemble or edit compiled code / serialized fields.
+for pkg in ("UnityPy",):
+    d, b, h = collect_all(pkg)
+    datas += d; binaries += b; hiddenimports += h
+
+# our engine + the signer jar
+hiddenimports += ["core.bundle", "core.chunkfmt",
+                  "core.apkbuild", "core.modbuild", "core.project"]
+datas += [(os.path.join(ROOT, "vendor", "uber-apk-signer.jar"), "vendor")]
+
+# optional bundled JRE (CI drops a trimmed runtime at ./jre before building) so
+# the user needs no Java install. Omitted from source/mac test builds.
+tree_extra = []
+if os.path.isdir(os.path.join(ROOT, "jre")):
+    tree_extra.append(Tree(os.path.join(ROOT, "jre"), prefix="jre"))
+
+a = Analysis(
+    [os.path.join(ROOT, "patcher", "patcher.py")],
+    pathex=[ROOT],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+exe = EXE(
+    pyz, a.scripts, a.binaries, a.datas, *tree_extra,
+    name="LeapDayModPatcher",
+    console=False,            # windowed app (Tkinter)
+    disable_windowed_traceback=False,
+    upx=False,
+)
+if IS_MAC:
+    app = BUNDLE(
+        exe,
+        name="LeapDayModPatcher.app",
+        icon=None,
+        bundle_identifier="com.leapdaymod.patcher",
+        info_plist={"NSHighResolutionCapable": True},
+    )

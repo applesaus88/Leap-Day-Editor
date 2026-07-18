@@ -1,0 +1,24 @@
+# Leap Day Mod Studio — runtime dependencies (Windows / macOS / Linux)
+# Install with:  python3 -m pip install -r requirements.txt
+
+UnityPy>=1.10            # read/write the game's asset bundles (levels, sprites)
+pywebview>=4.4           # desktop GUI shell (native webview per-OS)
+Pillow>=10.0             # sprite/image handling for the editor preview
+
+# Read-only: lets the editor locate sprites stored inside custom script
+# components (e.g. a Mace trap's art). Not required by the headless patcher.
+TypeTreeGeneratorAPI>=1.1
+
+# Optional — only needed to (re)generate the native tuning library's libmain
+# DT_NEEDED patch. End users editing levels do NOT need this.
+# lief>=0.14
+
+# --- Platform notes -------------------------------------------------------
+# Windows: pywebview uses the Edge WebView2 runtime (pre-installed on Win 11;
+#          Win 10 may need the free "Evergreen" WebView2 runtime from Microsoft).
+# Linux:   pywebview needs a GTK backend — install system packages
+#          `python3-gi gir1.2-webkit2-4.1` (Debian/Ubuntu) then `pip install pycairo PyGObject`.
+# macOS:   uses the built-in WebKit — no extra runtime needed.
+#
+# Building/installing an APK additionally needs Java 17+ (signing) and, to
+# install to a device, `adb` with an arm64 Android emulator.
