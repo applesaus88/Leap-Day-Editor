@@ -294,6 +294,17 @@ def build(
                     summary["cactus_themes_allowed"] = nca
             except Exception as e:
                 log(f"[modbuild] cactus theme-allow skipped: {e}")
+            # open the per-theme spawn pool: give every theme the union of all
+            # themes' allowed enemies/traps, so any enemy spawns in any theme
+            # (e.g. woolyTrunkySr in tropical). Data edit — the code-side filter
+            # patches can't do this (the engine picks FROM the pool list).
+            try:
+                nae = typetree.allow_all_elements_all_themes(b.env, gen, log=log)
+                if nae:
+                    b.mark_dirty()
+                    summary["all_elements_all_themes"] = nae
+            except Exception as e:
+                log(f"[modbuild] allow-all-in-every-theme skipped: {e}")
             if project.overrides:
                 log("[modbuild] generating Level type tree for ordered-list override")
                 n = typetree.override_level_lists(b.env, gen, project.overrides, log=log)

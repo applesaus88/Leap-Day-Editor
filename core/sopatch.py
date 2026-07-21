@@ -145,18 +145,10 @@ PATCHES: dict[str, list[Patch]] = {
         Patch("allow_all_elements:shouldDiscardThisChunk", 0x13A6A3C,
               bytes.fromhex("ffc301d1"), RET_FALSE,
               "ThemeFilter.shouldDiscardThisChunk(r) -> false (never discard)"),
-        # --- spawn-time gate: the per-theme allowedEnemies/allowedTraps whitelist ---
-        # filterChunks keeps the chunk, but at spawn the engine still checks whether
-        # each enemy/trap is on the CURRENT theme's allowed list — if not it falls
-        # back to the "lips" basic enemy (e.g. woolyTrunkySr in the ghost theme).
-        # Force both membership checks true so every enemy/trap is allowed in EVERY
-        # theme (the code-patch equivalent of the per-theme allow_cactus_variants).
-        Patch("allow_all_elements:isEnemyOnList", 0x13A7948,
-              bytes.fromhex("fe5fbda9"), RET_TRUE,
-              "ThemeFilter.isEnemyOnList(name,list) -> true (every enemy allowed in every theme)"),
-        Patch("allow_all_elements:isTrapGroupOnList", 0x13A79F8,
-              bytes.fromhex("fe0f1df8"), RET_TRUE,
-              "ThemeFilter.isTrapGroupOnList(name,list) -> true (every trap group allowed in every theme)"),
+        # NOTE: the per-theme allowedEnemies/allowedTraps SPAWN pool is a data list,
+        # not a code check — the engine picks the enemy FROM it, so forcing
+        # isEnemyOnList/isTrapGroupOnList true does nothing. That gate is opened by a
+        # typetree data edit instead (typetree.allow_all_elements_all_themes).
         # --- offline/build-time list computation (harmless extra coverage) ---
         Patch("allow_all_elements:NotForbidden", 0x13AE54C, bytes.fromhex("fe67bca9"),
               RET_TRUE, "LevelOutput.ThemeData.AreAllElementsNotForbidden() -> true"),

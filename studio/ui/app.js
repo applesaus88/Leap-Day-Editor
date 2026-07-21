@@ -170,6 +170,10 @@ function isShooterEnemy(properties){
   const b=String(properties||'').split('@')[0];
   return SHOOTER_ENEMIES.has(b)||b.startsWith('WallFlower'); // all wall flowers shoot
 }
+// Enemies whose "shoots" dropdown is restricted to a fixed projectile set — e.g.
+// the totem boomeranger can only throw the boomerang (axe); other projectiles
+// don't work with its throw/return mechanic.
+const ENEMY_PROJECTILES={totemBoomeranger:['axe']};
 // Enemies that don't move — walk speed is meaningless, so hide it for them.
 const NON_WALKING_ENEMIES=new Set(['ManholeMonster']);
 function isWalkingEnemy(properties){
@@ -180,11 +184,17 @@ function renderEnemyTune(){
   const cell=state.selEnemyCell;
   if(!cell||!state.chunk){el.hidden=true;return;}
   el.hidden=false;
-  const sel=$('#etProj'); // (re)build the projectile options once
-  if(sel&&sel._built!==(state.projectiles||[]).length){
+  // some enemies may only throw a specific projectile (e.g. the totem boomeranger
+  // only throws the boomerang/axe); restrict its "shoots" list to those.
+  const _base=String(cell.properties||'').split('@')[0];
+  const _allow=ENEMY_PROJECTILES[_base]||null;   // array of allowed values, or null = all
+  const sel=$('#etProj'); // (re)build the projectile options when the allowed set changes
+  const _projKey=(_allow?_allow.join(','):'ALL')+'|'+(state.projectiles||[]).length;
+  if(sel&&sel._built!==_projKey){
     sel.innerHTML='<option value="">— leave default —</option>';
-    (state.projectiles||[]).forEach(o=>{const opt=document.createElement('option');opt.value=o.value;opt.textContent=o.label;sel.appendChild(opt);});
-    sel._built=(state.projectiles||[]).length;
+    (state.projectiles||[]).filter(o=>!_allow||_allow.includes(o.value))
+      .forEach(o=>{const opt=document.createElement('option');opt.value=o.value;opt.textContent=o.label;sel.appendChild(opt);});
+    sel._built=_projKey;
   }
   const rec=(state.enemyTuning||{})[etKey(cell.sx,cell.sy)]||{};
   $('#etProj').value=rec.projectile||'';

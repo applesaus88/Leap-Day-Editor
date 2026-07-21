@@ -1954,7 +1954,7 @@
    "name": "Enemies 3",
    "safe": true,
    "cells": [
-    "wallplantR",
+    null,
     null,
     "wallplantL",
     null,

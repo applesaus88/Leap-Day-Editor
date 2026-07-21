@@ -639,6 +639,126 @@ def allow_cactus_variants(env, gen: "TreeGen", *, log=print) -> int:
     return edited
 
 
+def _shared2_index(reader):
+    """1-based external file id for sharedassets2.assets from `reader`'s file (that's
+    where every enemy prefab lives), or None if this file can't reference it."""
+    try:
+        for i, ext in enumerate(reader.assets_file.externals or []):
+            if getattr(ext, "name", "").lower().endswith("sharedassets2.assets"):
+                return i + 1
+    except Exception:
+        pass
+    return None
+
+
+def allow_all_elements_all_themes(env, gen: "TreeGen", *, log=print) -> int:
+    """Make EVERY registered enemy spawnable in EVERY theme. The per-theme
+    ThemeFilter.allowedEnemies is the engine's SPAWN POOL — at spawn it picks the
+    enemy FROM this list, and anything not in it falls back to the "lips" basic
+    enemy (that's why a code patch on isEnemyOnList does nothing). So we add the
+    game's full enemy registry (EnemyInstancer.enemyFullList — all 88, all in
+    sharedassets2) to every theme's allowedEnemies. All ThemeFilters live in one
+    file and reference sharedassets2 by the same fid, so the sharedassets2 PATHIDS
+    are reusable across themes with each theme's own sharedassets2 fid. Returns the
+    number of ThemeFilters updated."""
+    tfn = gen.nodes("ThemeFilter")
+    # 1. the enemy set = the full registry (EnemyInstancer.enemyFullList) UNION every
+    #    pathid any theme already allows. Both are sharedassets2 pathids. The union is
+    #    needed because some enemies (e.g. woolyTrunkySr@17404) are referenced ONLY by
+    #    a theme's allowedEnemies and are NOT in enemyFullList, and vice-versa.
+    enemy_pids: set[int] = set()
+    ein = gen.nodes("EnemyInstancer")
+    for ei in find_mono(env, "EnemyInstancer"):
+        try:
+            tt = ei.read_typetree(ein)
+        except Exception:
+            continue
+        exts = [getattr(x, "name", "") for x in (ei.assets_file.externals or [])]
+        for p in (tt.get("enemyFullList") or []):
+            if not isinstance(p, dict):
+                continue
+            fid, pid = p.get("m_FileID"), p.get("m_PathID")
+            fn = "" if fid == 0 else (exts[fid - 1] if 0 < fid <= len(exts) else "")
+            if pid is not None and fn.lower().endswith("sharedassets2.assets"):
+                enemy_pids.add(pid)
+    for tf in find_mono(env, "ThemeFilter"):
+        try:
+            tt = tf.read_typetree(tfn)
+        except Exception:
+            continue
+        sa2 = _shared2_index(tf)
+        if sa2 is None:
+            continue
+        for grp in (tt.get("allowedEnemies") or []):
+            for e in (grp.get("gameObjects") or []) if isinstance(grp, dict) else []:
+                if isinstance(e, dict) and e.get("m_FileID") == sa2 and e.get("m_PathID") is not None:
+                    enemy_pids.add(e.get("m_PathID"))
+    if not enemy_pids:
+        log("[typetree] allow-all-in-every-theme: no enemies found; skipped")
+        return 0
+    # 2. add every enemy to every theme's allowedEnemies (each group / date range)
+    edited = 0
+    for tf in find_mono(env, "ThemeFilter"):
+        try:
+            tt = tf.read_typetree(tfn)
+        except Exception:
+            continue
+        sa2 = _shared2_index(tf)
+        groups = tt.get("allowedEnemies")
+        if sa2 is None or not isinstance(groups, list) or not groups:
+            continue
+        changed = False
+        for grp in groups:
+            gos = grp.get("gameObjects") if isinstance(grp, dict) else None
+            if not isinstance(gos, list):
+                continue
+            have = {e.get("m_PathID") for e in gos
+                    if isinstance(e, dict) and e.get("m_FileID") == sa2}
+            for pid in enemy_pids:
+                if pid not in have:
+                    gos.append({"m_FileID": sa2, "m_PathID": pid}); changed = True
+        if changed:
+            tf.save_typetree(tt, tfn)
+            edited += 1
+    # 3. spawn-by-name registry: getEnemyToSpawnFromRange -> findEnemyObject resolves
+    #    the authored enemy name against EnemyInstancer's lists; an enemy not in them
+    #    falls back to backupEnemyBasic ("lips"). Register every enemy in every list
+    #    (enemyFullList / enemiesToSpawn / masterEnemies groups) so any placed enemy
+    #    resolves. Uses EnemyInstancer's own sharedassets2 fid.
+    reg = 0
+    for ei in find_mono(env, "EnemyInstancer"):
+        try:
+            tt = ei.read_typetree(ein)
+        except Exception:
+            continue
+        sa2 = _shared2_index(ei)
+        if sa2 is None:
+            continue
+        changed = False
+
+        def _add_all(lst):
+            nonlocal changed
+            if not isinstance(lst, list):
+                return
+            have = {e.get("m_PathID") for e in lst
+                    if isinstance(e, dict) and e.get("m_FileID") == sa2}
+            for pid in enemy_pids:
+                if pid not in have:
+                    lst.append({"m_FileID": sa2, "m_PathID": pid}); changed = True
+
+        _add_all(tt.get("enemyFullList"))
+        _add_all(tt.get("enemiesToSpawn"))
+        for grp in (tt.get("masterEnemies") or []):
+            if isinstance(grp, dict):
+                _add_all(grp.get("enemies"))
+        if changed:
+            ei.save_typetree(tt, ein)
+            reg += 1
+    log(f"[typetree] allow-all-enemies-in-every-theme: {len(enemy_pids)} enemies "
+        f"-> {edited} ThemeFilter(s) + {reg} EnemyInstancer(s) updated")
+    return edited + reg
+
+
 def scale_cactus_variants(env, gen: "TreeGen", *, log=print) -> int:
     """cactusbig / cactussmall crash on spawn in this game version while cactusmed
     works (their prefabs are otherwise identical to med — only the unique giant /
