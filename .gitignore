@@ -26,6 +26,12 @@
 !/requirements.txt
 !/.gitignore
 
+# re-include ONLY the APK signer (Apache-2.0, required to build); nothing else
+# in vendor/ is tracked
+!/vendor/
+/vendor/*
+!/vendor/uber-apk-signer.jar
+
 # strip generated files / OS junk INSIDE the re-included folders
 **/__pycache__/
 **/*.pyc
@@ -57,4 +63,3 @@ jre/
 **/node_modules/
 **/*.node
 **/frida-server
-vendor/uber-apk-signer.jar
