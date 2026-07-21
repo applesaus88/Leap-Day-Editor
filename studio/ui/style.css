@@ -65,6 +65,24 @@ h3 input{font:11px sans-serif;width:88px;text-transform:none}
 /* fill the space under the toolbar, whatever height it ended up (no hardcoded
    49px). min-height:0 lets the inner scroll panes work inside the flex parent. */
 main{display:grid;grid-template-columns:var(--leftw,240px) 6px minmax(0,1fr) 6px var(--rightw,270px);flex:1 1 auto;min-height:0}
+/* Full-screen "load a game" gate — covers the whole editor until a correct
+   .xapk is loaded (body.no-game). Keeps every chunk / edit tool hidden. */
+#needGame{display:none}
+body.no-game main{display:block;position:relative}
+body.no-game main>*:not(#needGame){display:none!important}
+body.no-game #needGame{display:flex;position:absolute;inset:0;z-index:50;
+  align-items:center;justify-content:center;background:
+  radial-gradient(120% 90% at 50% 0%, #232838 0%, var(--bg) 60%);padding:24px}
+.ng-card{max-width:520px;text-align:center;background:var(--panel);
+  border:1px solid var(--line);border-radius:14px;padding:38px 40px;
+  box-shadow:0 20px 60px #0007}
+.ng-card h1{margin:0 0 6px;font-size:26px}
+.ng-card p{color:var(--muted);line-height:1.5;margin:0 0 20px}
+.ng-btn{font-size:15px;padding:11px 22px}
+.ng-err{margin-top:16px;padding:11px 14px;border-radius:8px;
+  background:#e5646f1a;border:1px solid var(--danger);color:#f2b8bd;
+  font-size:13px;line-height:1.45}
+.ng-hint{margin-top:16px;color:var(--muted);font-size:12px}
 /* draggable column dividers */
 .colsplit{background:var(--line);cursor:col-resize;position:relative}
 .colsplit:hover,.colsplit.dragging{background:var(--accent)}

@@ -2267,7 +2267,11 @@ const ACTIONS={
   async newProj(){const n=prompt('Project name','My Leap Day Mod');if(n===null)return;applyState(await api().new_project(n));setStatus('new project');},
   async openProj(){const st=await api().load_project();if(st.error)return;applyState(st);setStatus('loaded '+st.project_name);},
   async saveProj(){const r=await api().save_project();setStatus(r.saved?('saved '+r.saved):r.error,!!r.error);},
-  async loadXapk(){setStatus('extracting game…');const st=await api().pick_xapk();if(st.error){setStatus(st.error,true);return;}
+  async loadXapk(){const eg=$('#needGameErr');if(eg)eg.hidden=true;setStatus('extracting game…');
+    const st=await api().pick_xapk();
+    if(st.error){setStatus(st.error,true);
+      if(eg&&st.error!=='cancelled'){eg.textContent=st.error;eg.hidden=false;} // show the reason on the big screen
+      return;}
     Object.keys(sprites).forEach(k=>delete sprites[k]); // game changed → drop cached (incl. null) sprites so all re-resolve
     state.charPortraits=null; // rebuild character portraits for the new game
     applyState(st);await refreshChunkList();await refreshCalendar();setStatus('game loaded — loading sprites…');refreshPaletteArt().then(()=>{renderPaletteBar();setStatus('game loaded — pick a date or chunk');});},
@@ -2419,6 +2423,10 @@ function applyState(st){$('#projName').value=st.project_name||'';updateEdited(st
   if(st.character_names)buildForceChar(st.character_names,st.force_character);
   if(st.firebar_dot&&(!fbDot||fbDot._src!==st.firebar_dot)){fbDot=new Image();fbDot._src=st.firebar_dot;
     fbDot.onload=()=>{draw();document.querySelectorAll('canvas.fbthumb').forEach(drawFirebarThumb);};fbDot.src=st.firebar_dot;}
+  else if(!st.firebar_dot){fbDot=null;} // no game loaded → drop any stored ball image
+  // gate the whole editor behind a loaded game: the big overlay stays until a
+  // correct .xapk is loaded (st.bundle_loaded), keeping all chunks hidden.
+  if(st.bundle_loaded!==undefined)document.body.classList.toggle('no-game',!st.bundle_loaded);
   state.power=!!st.power_mode;$('#powerMode').checked=state.power;applyPower();
   // opening/creating a project changes the edited chunks, so the day filmstrip
   // thumbnails are stale — reload the current day so the previews match the mod.

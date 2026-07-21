@@ -47,6 +47,11 @@ from core.project import Project
 from core.sprites import SpriteResolver
 from core import modbuild
 
+# The correct game the patches target. Loading is gated on both: right game
+# (package) AND right version (the sopatch offsets are version-specific).
+GAME_PACKAGE = "com.nitrome.leapday"
+GAME_VERSION = "1.142.2"          # ships as leap-day-1-142-2.xapk
+
 CATALOG = os.path.join(ROOT, "tiles", "catalog.json")
 SPRITE_OVERRIDES = os.path.join(ROOT, "tiles", "sprite_overrides.json")
 ROSTER_LAYOUT = os.path.join(ROOT, "tiles", "roster_layout.json")
@@ -166,16 +171,17 @@ class Api:
 
     def _dot_uri(self):
         """Data-URI PNG of the firebar ball sprite (tile_fire-2 — a red ring; over
-        the dark grid it reads grey-centred, like the game). Cached."""
+        the dark grid it reads grey-centred, like the game). Pulled live from the
+        currently-loaded game every time — no stored/cached image that could go
+        stale or survive a game switch. (The SpriteResolver keeps its own per-game
+        cache, so this stays cheap and is reset whenever a new game is loaded.)"""
         if not self.sprites:
             return None
-        if not getattr(self, "_dot_cache", None):
-            try:
-                rec = self.sprites.get("tile_fire-2")
-                self._dot_cache = rec.get("uri") if rec else None
-            except Exception:
-                self._dot_cache = None
-        return self._dot_cache
+        try:
+            rec = self.sprites.get("tile_fire-2")
+            return rec.get("uri") if rec else None
+        except Exception:
+            return None
 
     @staticmethod
     def _fb_render_from_fields(f):
@@ -1240,10 +1246,43 @@ class Api:
             return {"error": "cancelled"}
         return self.load_xapk(sel[0])
 
+    def _validate_xapk(self, path):
+        """None if `path` is the CORRECT Leap Day package (right game AND the
+        version the patches target), else a human-readable reason. The sopatch
+        offsets are version-specific, so a wrong build must be refused."""
+        import zipfile, io, re
+        try:
+            with zipfile.ZipFile(path) as z:
+                names = z.namelist()
+                base = next((n for n in names
+                             if n.endswith("com.nitrome.leapday.apk")), None)
+                if not base:
+                    return ("That isn't Leap Day. Select the game package "
+                            "leap-day-1-142-2.xapk.")
+                if not any(n.endswith("config.arm64_v8a.apk") for n in names):
+                    return ("This Leap Day package is missing its arm64 split "
+                            "(config.arm64_v8a.apk) — use the full .xapk.")
+                mf = zipfile.ZipFile(io.BytesIO(z.read(base))).read("AndroidManifest.xml")
+        except Exception as e:
+            return f"Couldn't read that file as an .xapk ({e})."
+        # AndroidManifest.xml is binary AXML; its string pool holds the package
+        # name and versionName as UTF-16LE. Presence-check both.
+        strings = {s.decode("utf-16-le", "ignore")
+                   for s in re.findall(rb'(?:[\x20-\x7e]\x00){3,}', mf)}
+        if GAME_PACKAGE not in strings:
+            return f"That package isn't Leap Day ({GAME_PACKAGE})."
+        if GAME_VERSION not in strings:
+            return (f"Wrong Leap Day version. The patches target {GAME_VERSION} "
+                    f"(leap-day-1-142-2.xapk) — please use that exact build.")
+        return None
+
     def load_xapk(self, path):
         """Extract data.unity3d (+ the .so and metadata, read-only, so the
         sprite resolver can find art held in custom scripts) and index chunks."""
         import zipfile, tempfile, io
+        err = self._validate_xapk(path)
+        if err:
+            return {"error": err}
         tmp = os.path.join(tempfile.gettempdir(), "leapday_data.unity3d")
         so_bytes = meta_bytes = None
         with zipfile.ZipFile(path) as z:

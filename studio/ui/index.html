@@ -24,6 +24,16 @@
   </header>
 
   <main>
+    <!-- Full-screen gate: stays until a CORRECT .xapk is loaded; hides all chunks. -->
+    <div id="needGame">
+      <div class="ng-card">
+        <h1>Leap Day Editor</h1>
+        <p>To start, load the game package <b>leap-day-1-142-2.xapk</b>.</p>
+        <button data-act="loadXapk" class="accent ng-btn">Load Game (.xapk)</button>
+        <div id="needGameErr" class="ng-err" hidden></div>
+        <div class="ng-hint">You supply your own copy of the game — it isn't included.</div>
+      </div>
+    </div>
     <!-- LEFT: tools / layers / assets -->
     <aside id="left">
       <div class="panel">
