@@ -49,6 +49,22 @@ _VARIANTS = [
                   {"token": "greenpipe_down", "label": "down ▼"},
                   {"token": "greenpipe_left", "label": "left ◀"},
                   {"token": "greenpipe_right", "label": "right ▶"}]},
+    # ---- cannons: one per look, direction picked with a button ----------------
+    # each cannon tile bakes its firing direction in, so the "direction" variants
+    # just swap to the correctly-oriented tile. ghost/barrel/blue fire horizontally
+    # (left/right); red fires vertically (up/down).
+    {"kind": "cannon_ghost", "label": "💥 Cannon · ghost", "mechanism": "variant",
+     "variants": [{"token": "trap126", "label": "right ▶"},
+                  {"token": "trap127", "label": "left ◀"}]},
+    {"kind": "cannon_barrel", "label": "💥 Cannon · barrel", "mechanism": "variant",
+     "variants": [{"token": "trap128", "label": "right ▶"},
+                  {"token": "trap129", "label": "left ◀"}]},
+    {"kind": "cannon_blue", "label": "💥 Cannon · blue", "mechanism": "variant",
+     "variants": [{"token": "trap130", "label": "right ▶"},
+                  {"token": "trap131", "label": "left ◀"}]},
+    {"kind": "cannon_red", "label": "💥 Cannon · red", "mechanism": "variant",
+     "variants": [{"token": "trap133", "label": "up ▲"},
+                  {"token": "trap132", "label": "down ▼"}]},
     # ---- checkpoint FLAG + RESPAWN point (paired, author-placed) --------------
     # Two placeable markers that both paint a HomingMissileCannon (the only prefab
     # with built-in proximity detection). The shipped native mod tells them apart
@@ -112,25 +128,13 @@ _ALL_PROJECTILES = [
     {"value": "Snowball", "label": "❄️ snowball"},
     {"value": "big_snowball", "label": "❄️ big snowball"},
     {"value": "Coconut", "label": "🥥 coconut"},
-    {"value": "bomb", "label": "💣 bomb"},
     {"value": "Bullet", "label": "• bullet"},
-    {"value": "Arrow", "label": "🏹 arrow"},
     {"value": "axe", "label": "🪓 axe"},
     {"value": "HomingMissile", "label": "🚀 homing missile"},
-    {"value": "HomingGhost", "label": "👻 homing ghost"},
-    {"value": "SmallBlob", "label": "🟢 green blob"},
     {"value": "GiantCrabFishBulletAnimated", "label": "🐟 fish"},
-    {"value": "bird", "label": "🐦 bird"},
     {"value": "fly", "label": "🪰 fly"},
     {"value": "AcidBall", "label": "🟢 acid ball"},
-    {"value": "MudBall", "label": "🟤 mud ball"},
-    {"value": "TurtleSpike", "label": "🐢 turtle spike"},
-    {"value": "ManholeMonsterShot", "label": "🕳 manhole shot"},
-    {"value": "AsteroidMedium", "label": "☄️ medium asteroid"},
-    {"value": "AsteroidSmall", "label": "☄️ small asteroid"},
     {"value": "KingBullet", "label": "👑 king bullet"},
-    {"value": "BlobBall", "label": "🔵 blob ball"},
-    {"value": "Ball", "label": "⚪ ball"},
 ]
 
 

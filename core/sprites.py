@@ -333,19 +333,23 @@ class SpriteResolver:
 
     @staticmethod
     def _rotate_record(rec: dict, angle: float) -> dict:
-        """Bake a `@<deg>` rotation into the sprite: rotate the image about its
-        pivot and recompute the pivot so a normal pivot-blit lands it exactly
-        where the game draws it. (Doing it here keeps the editor's draw simple
-        and correct — canvas-side rotation of corner-pivoted bars was off.)"""
+        """Bake a `@<deg>` rotation into the sprite, rotating about the centre of
+        the PLACEMENT CELL (not the sprite's own centre). The pivot maps to the
+        cell's top-left corner, so the cell centre is pivot + half a cell (8 native
+        px). Recompute the pivot so a pivot-blit keeps that cell centre fixed — the
+        block spins in place inside its cell instead of swinging away."""
         raw = base64.b64decode(rec["uri"].split(",", 1)[1])
         im = Image.open(io.BytesIO(raw)).convert("RGBA")
         w, h, px, py = rec["w"], rec["h"], rec["px"], rec["py"]
-        im2 = im.rotate(-angle, expand=True, resample=Image.NEAREST)
-        pvx, pvy = px * w, (1 - py) * h            # pivot pixel (from top-left)
+        im2 = im.rotate(-angle, expand=True, resample=Image.NEAREST)   # rotates content about the image centre
+        pvx, pvy = px * w, (1 - py) * h            # old pivot pixel (from top-left) = cell top-left corner
+        HALF = 8.0                                 # half of a 16-native-px cell
+        rcx, rcy = pvx + HALF, pvy + HALF          # placement-cell centre in the old image
         a = math.radians(-angle); ca, sa = math.cos(a), math.sin(a)
-        ox, oy = pvx - w / 2, pvy - h / 2
-        nx = ox * ca - oy * sa + im2.width / 2     # pivot pixel in rotated image
-        ny = ox * sa + oy * ca + im2.height / 2
+        ox, oy = rcx - w / 2, rcy - h / 2          # where that point lands in the rotated image
+        rrx = ox * ca - oy * sa + im2.width / 2
+        rry = ox * sa + oy * ca + im2.height / 2
+        nx, ny = rrx - HALF, rry - HALF            # new pivot so the cell centre stays put
         buf = io.BytesIO(); im2.save(buf, format="PNG")
         uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
         return {**rec, "uri": uri, "w": im2.width, "h": im2.height,
@@ -632,6 +636,10 @@ class SpriteResolver:
         resolver can't place or orient automatically. rot/arrow are passed through
         for the editor to render."""
         ov = self._overrides.get(token)
+        if ov is None and "#" in token:
+            # composite enemy token (e.g. "walkerspike#walkerreg") — fall back to
+            # the override for its first member, whose sprite the resolver drew.
+            ov = self._overrides.get(token.split("#", 1)[0])
         if not ov or rec is None:
             return rec
         rec = dict(rec)

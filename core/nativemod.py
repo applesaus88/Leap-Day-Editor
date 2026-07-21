@@ -240,7 +240,9 @@ PREBUILT_DIR = os.path.join(NATIVE_DIR, "prebuilt")
 def serialize_config(enemy_tuning: dict[str, dict],
                      shoot_bakes: dict[str, float] | None = None,
                      axe_settings: dict | None = None,
-                     respawn_links: list[tuple[str, int, int]] | None = None) -> tuple[str, int]:
+                     respawn_links: list[tuple[str, int, int]] | None = None,
+                     playtest: dict | None = None,
+                     ghostr_cells: list[tuple[str, int, int]] | None = None) -> tuple[str, int]:
     """Serialize the tuning map + dev bakes into the blob's line format. Mirrors
     the old gen_config_h codegen (same (chunk,col,rowFromBottom) key math), but
     emits text the .so parses at runtime instead of C the compiler bakes in.
@@ -302,6 +304,23 @@ def serialize_config(enemy_tuning: dict[str, dict],
         if "|" in chunk or "\n" in chunk:
             continue
         lines.append(f"r|{chunk}|{int(col)}|{int(row)}")
+    # ghostR cells (gr|chunk|col|rowFromBottom): each placed ghostR was emitted as
+    # ghostL; the native mod flips the ghost at this cell to leftToRight=1.
+    for (chunk, col, row) in (ghostr_cells or []):
+        chunk = str(chunk)
+        if "|" in chunk or "\n" in chunk:
+            continue
+        lines.append(f"gr|{chunk}|{int(col)}|{int(row)}")
+    # playtest features baked native (gated by their Settings toggles):
+    # p|keep|bgbare|smooth|locky|captop|hidetimer|hideprog|respawn  (each 0/1)
+    if playtest:
+        def _b(k, default=0):
+            return 1 if playtest.get(k, default) else 0
+        flags = [_b("keep_music_bg"), _b("bg_bare"), _b("smooth_camera"),
+                 _b("lock_camera_y"), _b("lock_y_cap_top", 1), _b("hide_timer"),
+                 _b("hide_progress"), _b("respawn_flags")]
+        if any(flags):
+            lines.append("p|" + "|".join(str(f) for f in flags))
     return "\n".join(lines) + "\n", n
 
 
@@ -505,7 +524,9 @@ def embed_into_arm64(arm64_in: str, arm64_out: str, libnative_bytes: bytes,
 def build_and_embed(enemy_tuning: dict[str, dict], arm64_in: str, arm64_out: str,
                     workdir: str, debug: bool = False, log=print,
                     axe_settings: dict | None = None,
-                    respawn_links: list[tuple[str, int, int]] | None = None) -> dict:
+                    respawn_links: list[tuple[str, int, int]] | None = None,
+                    allow_empty: bool = False, playtest: dict | None = None,
+                    ghostr_cells: list[tuple[str, int, int]] | None = None) -> dict:
     """Full path: serialize tuning -> patch it into the prebuilt libnativemod.so
     -> embed. Only the FIRST build on a machine compiles the (config-blank) .so;
     every tuning change after that is a pure byte-patch — no NDK. Returns a
@@ -514,8 +535,10 @@ def build_and_embed(enemy_tuning: dict[str, dict], arm64_in: str, arm64_out: str
     os.makedirs(workdir, exist_ok=True)
     respawn_links = respawn_links or []
     config_text, n = serialize_config(enemy_tuning, axe_settings=axe_settings,
-                                      respawn_links=respawn_links)
-    if n == 0 and not respawn_links and not axe_settings:
+                                      respawn_links=respawn_links, playtest=playtest,
+                                      ghostr_cells=ghostr_cells)
+    if (n == 0 and not respawn_links and not axe_settings and not ghostr_cells
+            and not allow_empty):
         raise RuntimeError("no valid enemy tunings to build")
     prebuilt = get_prebuilt_so(arm64_in, workdir, debug=debug, log=log)
     libnative = patch_blob(open(prebuilt, "rb").read(), config_text)

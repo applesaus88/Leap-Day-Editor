@@ -31,6 +31,14 @@ import re
 from dataclasses import dataclass, field
 
 EMPTY = "-"
+
+# Enemy tokens the GAME's spawner can't resolve (not in EnemyInstancer's
+# hardcoded findEnemyObject chain / enemyFullList) -> a working substitute.
+# Without this the game spawns the "lips" basic-enemy failsafe instead.
+#   ghostR: only ghostL is registered as spawnable in this build, so a placed
+#   ghostR would fall back to lips; emit it as ghostL so a real ghost spawns.
+GAME_ENEMY_REMAP = {"ghostR": "ghostL"}
+
 _NUM = r"-?\d+(?:\.\d+)?"
 _LEVEL_RE = re.compile(r'<level\s+w="(\d+)"\s+h="(\d+)"\s*>(.*)</level>', re.S)
 _LAYER_RE = lambda tag: re.compile(rf"<{tag}>(.*?)</{tag}>", re.S)
@@ -226,6 +234,16 @@ class Chunk:
                 sx, sy = int(round(e.sx)), int(round(e.sy))
                 if 0 <= sy < self.h and 0 <= sx < self.w:
                     active[sy][sx] = "ennemy0"
+                    # Cactus is a ground-rooted enemy: it only spawns with a solid
+                    # tile beneath it. For the GAME build, drop a support block under
+                    # any cactus that has none within two cells, so it spawns without
+                    # the author placing ground by hand. (Editor save is untouched.)
+                    if for_game and str(e.properties).startswith("cactus"):
+                        if not any(sy + d < self.h and active[sy + d][sx] not in
+                                   (EMPTY, None, "") and not str(active[sy + d][sx]).startswith(("ennemy", "fruit"))
+                                   for d in (1, 2)):
+                            if sy + 1 < self.h:
+                                active[sy + 1][sx] = "generic_01"
         # the second grid: keep it separate for the editor; for the game merge its
         # (integer-coord) tiles down into fg so they render as normal foreground.
         fg = self.fg
@@ -247,8 +265,15 @@ class Chunk:
         if grid2 is not None:
             lines.append(f"  <grid2>{encode_grid(grid2)}</grid2>")
         for e in self.enemies:
+            props = e.properties
+            if for_game:
+                # Some enemy tokens exist in chunk data but the game's spawner
+                # (EnemyInstancer.findEnemyObject — a hardcoded name chain) can't
+                # resolve them, so it spawns the "lips" failsafe instead. Remap
+                # those to a working equivalent so they spawn a real enemy.
+                props = GAME_ENEMY_REMAP.get(str(props), props)
             lines.append(
-                f'  <enemy sx="{_fmt(e.sx)}" sy="{_fmt(e.sy)}" properties="{e.properties}"/>'
+                f'  <enemy sx="{_fmt(e.sx)}" sy="{_fmt(e.sy)}" properties="{props}"/>'
             )
         for cn in self.conns:
             lines.append(f'  <conn sx="{cn.sx}" sy="{cn.sy}" mx="{cn.mx}" my="{cn.my}"/>')

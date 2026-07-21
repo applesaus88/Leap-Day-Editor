@@ -365,3 +365,12 @@ def clone_and_strip(data: bytes, *, new_pkg: str, old_pkg: str = "com.nitrome.le
     if strip:
         m.strip_components(STORE_NAME_PATTERNS, STORE_PERMISSIONS, log=log)
     return m.serialize()
+
+
+def strip_store_only(data: bytes, *, log=print) -> bytes:
+    """Remove ad / billing / Play-store components (and their permissions) from a
+    binary AndroidManifest.xml WITHOUT renaming the package — for a normal
+    replacement install (over the original), where the strip should still apply."""
+    m = Manifest(data)
+    m.strip_components(STORE_NAME_PATTERNS, STORE_PERMISSIONS, log=log)
+    return m.serialize()

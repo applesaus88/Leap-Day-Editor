@@ -46,6 +46,13 @@ class Patch:
 # Registry of available .so patches. Each name maps to one or more byte patches
 # (a "group") applied together.
 PATCHES: dict[str, list[Patch]] = {
+    # NOTE: raising the per-level chunk count is NOT a simple patch. GetNumberOfChunks
+    # (RVA 0x138B958) returns (masterPool size + 15) — the `add w0,w8,#0xf` at
+    # 0x138BA3C — which is why a day tops out ~31. Bumping that immediate was tested
+    # and the level GENERATOR HANGS on the loading screen: it can't produce more
+    # connectable chunks than the day's pool provides, so it loops forever. Making
+    # >31 work would need feeding the generator extra chunks (deep rework), not a
+    # count bump. Left here as a record so it isn't re-attempted naively.
     "vip_popup": [
         Patch("vip_popup", 0x1409F14, bytes.fromhex("fe57bea9"), RET_FALSE,
               "Stub TitleScreen.IsVIPPopupActive() -> false"),
@@ -138,6 +145,18 @@ PATCHES: dict[str, list[Patch]] = {
         Patch("allow_all_elements:shouldDiscardThisChunk", 0x13A6A3C,
               bytes.fromhex("ffc301d1"), RET_FALSE,
               "ThemeFilter.shouldDiscardThisChunk(r) -> false (never discard)"),
+        # --- spawn-time gate: the per-theme allowedEnemies/allowedTraps whitelist ---
+        # filterChunks keeps the chunk, but at spawn the engine still checks whether
+        # each enemy/trap is on the CURRENT theme's allowed list — if not it falls
+        # back to the "lips" basic enemy (e.g. woolyTrunkySr in the ghost theme).
+        # Force both membership checks true so every enemy/trap is allowed in EVERY
+        # theme (the code-patch equivalent of the per-theme allow_cactus_variants).
+        Patch("allow_all_elements:isEnemyOnList", 0x13A7948,
+              bytes.fromhex("fe5fbda9"), RET_TRUE,
+              "ThemeFilter.isEnemyOnList(name,list) -> true (every enemy allowed in every theme)"),
+        Patch("allow_all_elements:isTrapGroupOnList", 0x13A79F8,
+              bytes.fromhex("fe0f1df8"), RET_TRUE,
+              "ThemeFilter.isTrapGroupOnList(name,list) -> true (every trap group allowed in every theme)"),
         # --- offline/build-time list computation (harmless extra coverage) ---
         Patch("allow_all_elements:NotForbidden", 0x13AE54C, bytes.fromhex("fe67bca9"),
               RET_TRUE, "LevelOutput.ThemeData.AreAllElementsNotForbidden() -> true"),

@@ -31,6 +31,8 @@ from core import modbuild
 
 CATALOG = os.path.join(ROOT, "tiles", "catalog.json")
 SPRITE_OVERRIDES = os.path.join(ROOT, "tiles", "sprite_overrides.json")
+ROSTER_LAYOUT = os.path.join(ROOT, "tiles", "roster_layout.json")
+PALETTES = os.path.join(ROOT, "tiles", "palettes.json")
 BUILD_DIR = os.path.join(ROOT, "build")
 JAN_INDEX = os.path.join(ROOT, "tools", "january_chunks", "january_index.json")
 THEME_INDEX = os.path.join(ROOT, "tools", "january_chunks", "theme_index.json")
@@ -43,11 +45,20 @@ class Api:
         self.xapk_path: str | None = None
         self.bundle: Bundle | None = None        # read-only source of original chunks
         self.sprites: SpriteResolver | None = None
+        self._char_portraits: dict | None = None  # cache: char id -> portrait PNG
         self._catalog = json.load(open(CATALOG)) if os.path.exists(CATALOG) else {}
         # hand-authored sprite fixes (draw anchor / direction arrow per token),
         # baked into the editor permanently — applied by the SpriteResolver.
         self._sprite_overrides = (json.load(open(SPRITE_OVERRIDES))
                                   if os.path.exists(SPRITE_OVERRIDES) else {})
+        # dev-authored roster layout (custom order + clusters) shown to safe-mode
+        # users in the "Browse all" atlas. {"order":[token,...], "clusters":[...]}.
+        self._roster_layout = (json.load(open(ROSTER_LAYOUT))
+                               if os.path.exists(ROSTER_LAYOUT) else {})
+        # user-authored 12x12 tile palettes; safe-mode users pick blocks from these
+        # curated sets instead of the full 727-tile roster. File wins; else defaults.
+        self._palettes = (json.load(open(PALETTES))
+                          if os.path.exists(PALETTES) else None)
         # captured per-date chunk index (tools/capture_january.py) — what chunks
         # each calendar day actually loads, so a day can be edited surgically.
         self._jan = json.load(open(JAN_INDEX)) if os.path.exists(JAN_INDEX) else {}
@@ -173,7 +184,7 @@ class Api:
         """Global axe-boomerang tunables {range,speed,spin}. Blank/missing keys keep
         the .so's baked default. Applied by libnativemod.so to every thrown axe."""
         clean = {}
-        for k in ("range", "speed", "spin", "hang"):
+        for k in ("range", "speed", "hang"):   # spin removed from the UI
             v = (settings or {}).get(k)
             if v not in (None, ""):
                 try:
@@ -182,6 +193,79 @@ class Api:
                     pass
         self.project.axe = clean
         return self.get_state()
+
+    def get_character_portraits(self):
+        """Each character's SELECT PORTRAIT as a base64 PNG, keyed by character id
+        (the same index `set_force_character`/`set_grapple_skin` use). Read from
+        CharacterManager.characterPacks[].portrait — a cross-file Sprite PPtr into
+        sharedassets — so the picker can show every character's face. Cached.
+        Returns {"portraits": {id: {name, uri, w, h}}} (empty if no game loaded)."""
+        if getattr(self, "_char_portraits", None) is not None:
+            return {"portraits": self._char_portraits}
+        out = {}
+        if not (self.bundle and self.sprites):
+            return {"portraits": out}
+        try:
+            import base64, io
+            from core import typetree
+            env = self.bundle.env
+            so, meta = self.sprites._so, self.sprites._meta
+            if not (so and meta):
+                return {"portraits": out}
+            gen = typetree.TreeGen(so, meta)
+            nodes = gen.nodes("CharacterManager")
+            cms = typetree.find_mono(env, "CharacterManager")
+            if not cms:
+                return {"portraits": out}
+            cm = cms[0]
+            tree = cm.read_typetree(nodes)
+            # index every Sprite across ALL bundled asset files by (file, path_id)
+            spr_ix = {}
+            for o in env.objects:
+                if o.type.name == "Sprite":
+                    spr_ix[(o.assets_file.name, o.path_id)] = o
+            exts = cm.assets_file.externals
+            selfname = cm.assets_file.name
+
+            def resolve(ppt):
+                if not ppt or not ppt.get("m_PathID"):
+                    return None
+                fid = ppt.get("m_FileID", 0)
+                if fid == 0:
+                    fname = selfname
+                else:
+                    if fid - 1 >= len(exts):
+                        return None
+                    want = exts[fid - 1].path.split("/")[-1].lower()
+                    fname = next((f for (f, _) in spr_ix
+                                  if f.lower() == want), None)
+                    if fname is None:
+                        return None
+                return spr_ix.get((fname, ppt["m_PathID"]))
+
+            for pack in (tree.get("characterPacks") or []):
+                cid = pack.get("characterID")
+                if cid is None:
+                    continue
+                spr = resolve(pack.get("portrait"))
+                # some packs' portrait lives elsewhere; fall back to the first run frame
+                if spr is None:
+                    run = pack.get("runningAnim") or []
+                    spr = resolve(run[0]) if run else None
+                if spr is None:
+                    continue
+                try:
+                    img = spr.read().image.convert("RGBA")
+                except Exception:
+                    continue
+                buf = io.BytesIO(); img.save(buf, format="PNG")
+                out[int(cid)] = {"name": pack.get("characterName") or f"#{cid}",
+                                 "uri": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+                                 "w": img.width, "h": img.height}
+        except Exception as e:
+            return {"portraits": out, "error": str(e)}
+        self._char_portraits = out
+        return {"portraits": out}
 
     def set_force_character(self, idx):
         """Force the player to always play as character `idx` (None/'' = off).
@@ -452,6 +536,27 @@ class Api:
                 self.project.day_removed_structs.pop(date, None)
         return self.get_day_sequence(date)
 
+    def move_day_struct(self, date, struct_ord, anchor):
+        """Move a structural section (checkpoint / endzone / special) so it sits
+        above `anchor` gameplay chunks. The structural ORDER is fixed by the day's
+        generator, so the new anchor is clamped between its neighbours' — you can
+        slide a checkpoint through the gameplay chunks, not past another
+        structural piece."""
+        anchors = self._struct_anchors(date)
+        if anchors is None:
+            return {"error": f"no capture for {date}"}
+        si = int(struct_ord)
+        if not (0 <= si < len(anchors)):
+            return {"error": "no such section"}
+        v = self._jan.get(date) or {}
+        n = max(len(v.get("slots") or []),
+                len(self.project.day_orders.get(date) or []))
+        lo = anchors[si - 1] if si else 0
+        hi = anchors[si + 1] if si + 1 < len(anchors) else n
+        anchors[si] = max(lo, min(int(anchor), hi))
+        self.project.day_structs[date] = anchors
+        return self.get_day_sequence(date)
+
     def toggle_custom_checkpoint(self, date, gp_index, on=True):
         """Flag/unflag a gameplay slot as a CUSTOM checkpoint (emitted with
         isCheckpoint:1). Note: this registers a checkpoint at that position; a
@@ -575,8 +680,8 @@ class Api:
             return {"error": f"no capture for {date}"}
         slots = v["slots"]
         desired = list(self.project.day_orders.get(date) or slots)
-        if len(desired) < len(slots):
-            desired = (desired + [""] * len(slots))[:len(slots)]
+        if len(desired) < len(slots):                        # keep full length with NATIVE chunks
+            desired = desired + list(slots[len(desired):])
         i = int(gp_index)
         if not (0 <= i < len(desired)):
             return {"error": "slot out of range"}
@@ -587,6 +692,10 @@ class Api:
             self.project.day_structs[date] = [a - 1 if a > i else a
                                               for a in anchors]
         desired.pop(i)
+        # removal slides everything above DOWN one, leaving the TOP slot unclaimed.
+        # Leave it empty: an unclaimed slot is emitted as no override at all, so the
+        # game renders that slot's own NATIVE chunk. (Refilling it with slots[-1]
+        # stacked a duplicate copy of the last native chunk on every delete.)
         return self.set_day_order(date, desired)
 
     # ---- custom chunk library (from-scratch chunks, not tied to a game name)
@@ -1004,10 +1113,15 @@ class Api:
                     desired = [g["name"].split("/")[-1]  # pin the natural sequence
                                for g in override.gameplay_slots(gen)]
                 base = len(override.gameplay_slots(gen))
+                # a swapped-in checkpoint chunk needs the whole level counted too,
+                # so it gets its right checkpointNr (not the light path's 0).
+                swap_cp = any(override._chunk_kind(w) == "checkpoint"
+                              for w in desired if w)
                 # insert (grew) OR delete (shifted checkpoints, tracked in
-                # day_structs) OR checkpoint add/remove -> restamp the WHOLE level.
+                # day_structs) OR checkpoint add/remove/swap -> restamp the WHOLE
+                # level so EVERY checkpoint is counted and 1-indexed correctly.
                 if (len(desired) > base or date in self.project.day_structs
-                        or removed_cp or custom_cp):
+                        or removed_cp or custom_cp or swap_cp):
                     anchors = self._struct_anchors(date)
                     entry, levels = override.compile_day_build_full(
                         date, gen, desired, anchors, self._resolve_override,
@@ -1131,6 +1245,7 @@ class Api:
         self.bundle = Bundle(tmp)
         self.sprites = SpriteResolver(self.bundle.env, so_bytes, meta_bytes,
                                       overrides=self._sprite_overrides)
+        self._char_portraits = None            # rebuild portraits for the new game
         self.xapk_path = path
         return self.get_state()
 
@@ -1191,6 +1306,50 @@ class Api:
         os.makedirs(os.path.dirname(SPRITE_OVERRIDES), exist_ok=True)
         with open(SPRITE_OVERRIDES, "w") as f:
             json.dump(self._sprite_overrides, f, indent=2, sort_keys=True)
+
+    # ---- dev: roster layout (custom atlas order / clusters) --------------
+    def get_roster_layout(self):
+        """The dev-authored roster layout (order + clusters), or {} if none."""
+        return self._roster_layout
+
+    def save_roster_layout(self, layout):
+        """Persist the dev-authored roster layout to tiles/roster_layout.json.
+        `layout` = {"order":[token,...], "clusters":[{name, tokens:[...]}...]}.
+        An empty/falsy layout clears it (back to category grouping)."""
+        self._roster_layout = layout or {}
+        os.makedirs(os.path.dirname(ROSTER_LAYOUT), exist_ok=True)
+        if self._roster_layout:
+            with open(ROSTER_LAYOUT, "w") as f:
+                json.dump(self._roster_layout, f, indent=1)
+        elif os.path.exists(ROSTER_LAYOUT):
+            os.remove(ROSTER_LAYOUT)
+        return {"ok": True}
+
+    # ---- tile palettes (curated 12x12 sets) ------------------------------
+    def _default_palettes(self):
+        """Empty starter palettes — the dev fills them by hand (📎 Edit) and saves.
+        Kept empty on purpose: auto-filling every tile made a huge, gappy strip."""
+        def empty(name):
+            return {"name": name, "safe": True, "cells": [None] * 144}
+        return {"palettes": [empty("Palette 1"), empty("Palette 2"), empty("Palette 3")]}
+
+    def get_palettes(self):
+        """The saved palettes, or the built-in safe defaults if none saved."""
+        return self._palettes if self._palettes else self._default_palettes()
+
+    def save_palettes(self, data):
+        """Persist palettes to tiles/palettes.json. Each palette = {name, safe,
+        cells:[144]} (a 12x12 grid of tokens/null). Empty/falsy clears back to
+        the built-in defaults."""
+        pals = (data or {}).get("palettes") if isinstance(data, dict) else None
+        self._palettes = data if pals else None
+        os.makedirs(os.path.dirname(PALETTES), exist_ok=True)
+        if self._palettes:
+            with open(PALETTES, "w") as f:
+                json.dump(self._palettes, f, indent=1)
+        elif os.path.exists(PALETTES):
+            os.remove(PALETTES)
+        return {"ok": True}
 
     def set_sprite_override(self, token, data):
         """Bake a draw-anchor / rotation / arrow fix for `token` into the editor:
@@ -1394,8 +1553,11 @@ class Api:
         camera, lock camera Y, hide timer, hide progress) — all ride the same
         musicbg agent."""
         p = self.project
+        # a non-default background ("bare") also needs the agent, so the Background
+        # toggle works on its own — not only when music+bg keep-alive is on.
+        bg_bare = (getattr(p, "bg_mode", "full") or "full") != "full"
         return bool(p.keep_music_bg or p.smooth_camera or p.lock_camera_y
-                    or p.hide_timer or p.hide_progress)
+                    or p.hide_timer or p.hide_progress or bg_bare)
 
     def _musicbg_agent_path(self):
         agent = os.path.join(os.path.dirname(os.path.dirname(__file__)),

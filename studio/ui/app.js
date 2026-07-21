@@ -2,9 +2,13 @@
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
 const api=()=>window.pywebview.api;
-const CELL=16;                       // native world px per cell
+const CELL=16; // native world px per cell
 // tuning-panel multiplier choices: 0–2.5 by 0.25, plus a few big jumps
 const MULT_VALUES=[0,0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,5,10,100];
+// axe boomerang: UI is friendlier than the raw world-unit config the native mod
+// reads. range is shown in BLOCKS (1 block = 14 units); speed is shown as a
+// MULTIPLIER of the default flight speed. Both convert back on save.
+const AXE_BLOCK=14, AXE_SPEED_DEF=110;
 
 const CAT_COLOR={solid:'#7d8aa0',platform:'#4a90d9',fruit:'#e7a13a',hazard:'#d9534f',
   enemy_marker:'#b05cd9',autotile:'#3aa98a',decoration:'#5a6072',theme:'#c78a4a','-':'transparent'};
@@ -15,28 +19,28 @@ const state={
   catalog:{}, chunk:null,
   tool:'paint', layer:'active', selTile:'generic_06', selEnemy:'valentinesBlob',
   view:{scale:2,ox:40,oy:40},
-  onion:true, showGrid:true, gameView:true,   // gameView = accurate pivot placement
+  onion:true, showGrid:true, gameView:true, // gameView = accurate pivot placement
   layerVis:{bg:true,active:true,fg:true,grid2:true,enemy:true},
-  gridScope:true,    // false = place on grid 1 only; true = grids 1 + 2 (enemy grid)
+  gridScope:true, // false = place on grid 1 only; true = grids 1 + 2 (enemy grid)
   sel:null, clipboard:null, floating:null, hover:null,
   activePath:null, connStart:null, rot:0, showRot:true,
   undo:[], redo:[],
   drag:null, dragEnemy:null, spaceDown:false,
-  libEdit:false,          // true when the open chunk is a custom-library chunk
-  themeNames:[],          // Level.Theme roster (from the backend)
+  libEdit:false, // true when the open chunk is a custom-library chunk
+  themeNames:[], // Level.Theme roster (from the backend)
   dev:false, devTok:null, devOverrides:{}, artNames:[], devArtPick:false, // dev: hand-edit a sprite's anchor/rot/arrow/art
-  firebars:{},            // carrier token -> {length,double,start,clockwise,circular} for canvas drawing
-  enemyTuning:{},         // "chunk|sx|sy" -> {projectile,health,walk,h} per-INDIVIDUAL-enemy tuning
-  axe:{},                 // global axe-boomerang tunables {range,speed,spin} (blank = baked default)
-  projectiles:[],         // projectile roster for the per-enemy panel (from the backend)
-  selEnemyCell:null,      // {sx,sy,properties} of the placed enemy whose tuning panel is open
-  power:false,            // power mode: unlock advanced/risky tools
-  preview:null,           // when set, a read-only full-level preview is open
+  firebars:{}, // carrier token -> {length,double,start,clockwise,circular} for canvas drawing
+  enemyTuning:{}, // "chunk|sx|sy" -> {projectile,health,walk,h} per-INDIVIDUAL-enemy tuning
+  axe:{}, // global axe-boomerang tunables {range,speed,spin} (blank = baked default)
+  projectiles:[], // projectile roster for the per-enemy panel (from the backend)
+  selEnemyCell:null, // {sx,sy,properties} of the placed enemy whose tuning panel is open
+  power:false, // power mode: unlock advanced/risky tools
+  preview:null, // when set, a read-only full-level preview is open
 };
 // a tile token may carry a rotation suffix, e.g. "trap117@90"
 function splitTok(t){const m=/^(.*?)@(\d+(?:\.\d+)?)$/.exec(t);return m?[m[1],parseInt(m[2])]:[t,0];}
 function joinTok(base,ang){return ang?`${base}@${ang}`:base;}
-const sprites={};   // token -> {img,w,h} | null
+const sprites={}; // token -> {img,w,h} | null
 let ctx, cv;
 
 function setStatus(t,err){const s=$('#status');s.textContent=t;s.style.color=err?'#d56':'';}
@@ -55,16 +59,16 @@ function tileCat(name){const t=(state.catalog.tiles||[]).find(x=>x.name===name);
 // same placeholder art, so the label is how you tell e.g. a Mace from a Cannon.
 function tileLabel(name){const b=String(name).split('@')[0];const t=(state.catalog.tiles||[]).find(x=>x.name===b);return t&&t.label?t.label:'';}
 // A friendly display name for a palette/roster swatch: prefer the element panel's
-// label (so homingcannonUp reads "🚩 flag", homingcannonDown "🟢 respawn", a cannon
+// label (so homingcannonUp reads "flag", homingcannonDown "🟢 respawn", a cannon
 // carrier reads "💥 Cannon", …), then a catalog tile label, else the raw token.
 function objLabel(name){const b=String(name).split('@')[0];const k=(typeof TOKEN_KIND!=='undefined')&&TOKEN_KIND[b];
   if(k&&ELEM_PANELS[k]&&ELEM_PANELS[k].label) return ELEM_PANELS[k].label;
   return tileLabel(name)||name;}
 // element config panels (traps + enemies), loaded from the backend registry
 // (core/elements.py). A selected tile that maps to a kind opens its sidebar.
-let ELEM_PANELS={};   // kind -> {label, mechanism, fields?, variants?}
-let TOKEN_KIND={};    // token -> kind
-let HIDDEN_CARRIERS=new Set();   // extra carrier/variant tiles hidden from the palette
+let ELEM_PANELS={}; // kind -> {label, mechanism, fields?, variants?}
+let TOKEN_KIND={}; // token -> kind
+let HIDDEN_CARRIERS=new Set(); // extra carrier/variant tiles hidden from the palette
 async function loadElementPanels(){try{
   const r=await api().get_element_panels();
   ELEM_PANELS={};(r.panels||[]).forEach(p=>ELEM_PANELS[p.kind]=p);
@@ -80,9 +84,11 @@ function trapKindOf(tok){return TOKEN_KIND[String(tok||'').split('@')[0]]||null;
 // its title + controls adapt to the kind (mace knobs / field form / variant picker).
 function updateFirebarPanel(){
   const el=$('#firebarPanel');if(!el)return;
-  // enemy mode: a shooting enemy (woolyTrunky, Cupid, ghost pot…) opens its
-  // projectile panel; other enemies have none. paint mode: the selected tile.
-  const kind=(state.tool==='enemy')?trapKindOf(state.selEnemy):trapKindOf(state.selTile);
+  // this element-config panel is only for PAINT-mode trap tiles (firebar, cannon,
+  // rotating block, conveyor…). Enemies get no type-wide panel — everything about
+  // a placed enemy (projectile, health, walk/shoot/fire speed) lives in the
+  // per-enemy "THIS ENEMY ONLY" panel instead.
+  const kind=(state.tool==='enemy')?null:trapKindOf(state.selTile);
   state.trapKind=kind;el.hidden=!kind;
   if(!kind){state.panelKind=null;return;}
   const p=ELEM_PANELS[kind]||{},mech=p.mechanism;
@@ -90,13 +96,13 @@ function updateFirebarPanel(){
   $('#fbMace').hidden=(mech!=='mace');
   $('#fbFields').hidden=(mech!=='fields');
   $('#fbVariants').hidden=(mech!=='variant');
-  $('#fbBtn').hidden=(mech==='variant');   // variant places on click, no button
+  $('#fbBtn').hidden=(mech==='variant'); // variant places on click, no button
   // only (re)build the dynamic controls when the KIND changes — otherwise placing
   // (which re-runs this) would reset the fields you just set back to defaults.
   const changed=(state.panelKind!==kind);state.panelKind=kind;
   if(mech==='fields'){if(changed)renderElemFields(p);$('#fbBtn').textContent=p.enemy?'Apply projectile':'Use this — paint it';}
   else if(mech==='variant'){if(changed)renderElemVariants(p);}
-  else $('#fbBtn').textContent='🔥 Use this — paint it';
+  else $('#fbBtn').textContent='Use this — paint it';
 }
 function renderElemFields(p){
   const box=$('#fbFields');box.innerHTML='';
@@ -131,7 +137,7 @@ function applyElementResult(r){
   if(!r||r.error){setStatus((r&&r.error)||'element failed',true);return;}
   if(r.render){state.firebars=state.firebars||{};state.firebars[r.token]=r.render;}
   const p=ELEM_PANELS[r.kind]||{};
-  if(p.enemy){                         // projectile override on a shooting enemy
+  if(p.enemy){ // projectile override on a shooting enemy
     state.selEnemy=r.token;setTool('enemy');
     syncPaletteSel();ensureSprite(r.token);draw();
     $('#fbInfo').textContent=r.token;updateFirebarPanel();
@@ -155,12 +161,26 @@ function selectEnemyCell(ex){
   state.selEnemyCell=ex?{sx:Math.round(ex.sx),sy:Math.round(ex.sy),properties:ex.properties}:null;
   renderEnemyTune();
 }
+// The only enemies whose SHOOTING is tunable (shoots / shoot speed / fire rate).
+// Everything else is a non-shooter, so those fields stay hidden for it.
+const SHOOTER_ENEMIES=new Set(['trunky','valentinesCupid','ManholeMonster',
+  'woolyTrunky','woolyTrunkySr','bird','worm','MetalTrunky','TurtleSnail',
+  'totemBoomeranger','GiantCrab']);
+function isShooterEnemy(properties){
+  const b=String(properties||'').split('@')[0];
+  return SHOOTER_ENEMIES.has(b)||b.startsWith('WallFlower'); // all wall flowers shoot
+}
+// Enemies that don't move — walk speed is meaningless, so hide it for them.
+const NON_WALKING_ENEMIES=new Set(['ManholeMonster']);
+function isWalkingEnemy(properties){
+  return !NON_WALKING_ENEMIES.has(String(properties||'').split('@')[0]);
+}
 function renderEnemyTune(){
   const el=$('#enemyTunePanel');if(!el)return;
   const cell=state.selEnemyCell;
   if(!cell||!state.chunk){el.hidden=true;return;}
   el.hidden=false;
-  const sel=$('#etProj');                        // (re)build the projectile options once
+  const sel=$('#etProj'); // (re)build the projectile options once
   if(sel&&sel._built!==(state.projectiles||[]).length){
     sel.innerHTML='<option value="">— leave default —</option>';
     (state.projectiles||[]).forEach(o=>{const opt=document.createElement('option');opt.value=o.value;opt.textContent=o.label;sel.appendChild(opt);});
@@ -168,18 +188,23 @@ function renderEnemyTune(){
   }
   const rec=(state.enemyTuning||{})[etKey(cell.sx,cell.sy)]||{};
   $('#etProj').value=rec.projectile||'';
-  $('#etHealth').value=(rec.health==null?'':rec.health);
-  $('#etWalk').value=(rec.walk==null?'':rec.walk);
-  // multiplier dropdowns: 0–2.5 by 0.25, plus 5 / 10 / 100 (built once)
-  [['#etShootMult'],['#etFireMult']].forEach(([id])=>{const s=$(id);
-    if(s&&!s._built){s.innerHTML=MULT_VALUES.map(v=>`<option value="${v}">${v}×${v===1?' (normal)':''}</option>`).join('');s._built=true;}});
+  // multiplier dropdowns: 0–2.5 by 0.25, plus 5 / 10 / 100 (built once).
+  // walk speed is a multiplier too (walkmult), same scale as shoot/fire.
+  [['#etWalk'],['#etShootMult'],['#etFireMult']].forEach(([id])=>{const s=$(id);
+    if(s&&!s._built){s.innerHTML=MULT_VALUES.map(v=>`<option value="${v}">${v}×${v===1?' (normal)':(v===0?' (frozen)':'')}</option>`).join('');s._built=true;}});
+  $('#etWalk').value=(rec.walkmult==null?'1':String(rec.walkmult));
   $('#etShootMult').value=(rec.shootmult==null?'1':String(rec.shootmult));
   $('#etFireMult').value=(rec.firemult==null?'1':String(rec.firemult));
-  $('#etMuzzleX').value=(rec.muzzle_x==null?'':rec.muzzle_x);
-  $('#etMuzzleY').value=(rec.muzzle_y==null?'':rec.muzzle_y);
+  // shoot fields (shoots / shoot speed / fire rate) only apply to the shooting
+  // enemies — hide them for everything else so the panel isn't misleading.
+  const shooter=isShooterEnemy(cell.properties);
+  el.querySelectorAll('.et-shoot').forEach(l=>l.hidden=!shooter);
+  // walk speed only for enemies that actually move (e.g. not the manhole monster)
+  const walks=isWalkingEnemy(cell.properties);
+  el.querySelectorAll('.et-walk').forEach(l=>l.hidden=!walks);
   // edits apply straight to the in-memory model — no per-enemy save button
-  $('#etProj').onchange=$('#etHealth').onchange=$('#etWalk').onchange=$('#etShootMult').onchange=$('#etFireMult').onchange=$('#etMuzzleX').onchange=$('#etMuzzleY').onchange=commitEnemyTuneLocal;
-  renderAxeSettings();   // show the global axe-boomerang controls when this enemy throws the axe
+  $('#etProj').onchange=$('#etWalk').onchange=$('#etShootMult').onchange=$('#etFireMult').onchange=commitEnemyTuneLocal;
+  renderAxeSettings(); // show the global axe-boomerang controls when this enemy throws the axe
   const id=tileLabel(cell.properties);
   $('#etInfo').textContent=`col ${cell.sx}, row ${cell.sy} · ${cell.properties||''}${id?` (${id})`:''}`;
 }
@@ -191,21 +216,20 @@ function renderAxeSettings(){
   wrap.hidden=!isAxe;
   if(!isAxe)return;
   const a=state.axe||{};
-  $('#axeRange').value=(a.range==null?'':a.range);
-  $('#axeSpeed').value=(a.speed==null?'':a.speed);
-  $('#axeSpin').value=(a.spin==null?'':a.spin);
+  // stored in world units; shown as blocks (range) and a × multiplier (speed)
+  $('#axeRange').value=(a.range==null?'':+(a.range/AXE_BLOCK).toFixed(2));
+  $('#axeSpeed').value=(a.speed==null?'':+(a.speed/AXE_SPEED_DEF).toFixed(2));
   $('#axeHang').value=(a.hang==null?'':a.hang);
-  $('#axeRange').oninput=$('#axeSpeed').oninput=$('#axeSpin').oninput=$('#axeHang').oninput=commitAxeSettings;
+  $('#axeRange').oninput=$('#axeSpeed').oninput=$('#axeHang').oninput=commitAxeSettings;
 }
 function commitAxeSettings(){
   const a={};
-  const r=$('#axeRange').value,s=$('#axeSpeed').value,p=$('#axeSpin').value,h=$('#axeHang').value;
-  if(r!=='')a.range=parseFloat(r);
-  if(s!=='')a.speed=parseFloat(s);
-  if(p!=='')a.spin=parseFloat(p);
+  const r=$('#axeRange').value,s=$('#axeSpeed').value,h=$('#axeHang').value;
+  if(r!=='')a.range=parseFloat(r)*AXE_BLOCK;      // blocks -> world units
+  if(s!=='')a.speed=parseFloat(s)*AXE_SPEED_DEF;  // × multiplier -> world units
   if(h!=='')a.hang=parseFloat(h);
   state.axe=a;
-  api().set_axe(a);   // persist to the project (used by the build)
+  api().set_axe(a); // persist to the project (used by the build)
   setStatus('axe boomerang set (global) — Build + playtest to confirm');
 }
 // update the in-memory tuning for the selected enemy from the panel fields.
@@ -213,26 +237,22 @@ function commitAxeSettings(){
 function commitEnemyTuneLocal(){
   const cell=state.selEnemyCell;if(!cell||!state.chunk)return;
   const key=etKey(cell.sx,cell.sy);
-  const proj=$('#etProj').value,hp=$('#etHealth').value,wk=$('#etWalk').value,sm=$('#etShootMult').value,fm=$('#etFireMult').value;
-  const mx=$('#etMuzzleX').value,my=$('#etMuzzleY').value;
+  const proj=$('#etProj').value,wk=$('#etWalk').value,sm=$('#etShootMult').value,fm=$('#etFireMult').value;
   const rec={h:state.chunk.h};
   if(proj)rec.projectile=proj;
-  if(hp!=='')rec.health=parseInt(hp);
-  if(wk!=='')rec.walk=parseFloat(wk);
-  if(sm!==''&&parseFloat(sm)!==1)rec.shootmult=parseFloat(sm);   // 1× = no change
+  if(wk!==''&&parseFloat(wk)!==1)rec.walkmult=parseFloat(wk); // 1× = no change (multiplier)
+  if(sm!==''&&parseFloat(sm)!==1)rec.shootmult=parseFloat(sm); // 1× = no change
   if(fm!==''&&parseFloat(fm)!==1)rec.firemult=parseFloat(fm);
-  if(mx!=='')rec.muzzle_x=parseFloat(mx);   // projectile spawn offset (forward / up)
-  if(my!=='')rec.muzzle_y=parseFloat(my);
   state.enemyTuning=state.enemyTuning||{};
-  if(Object.keys(rec).length<=1)delete state.enemyTuning[key];   // only h -> nothing tuned
+  if(Object.keys(rec).length<=1)delete state.enemyTuning[key]; // only h -> nothing tuned
   else state.enemyTuning[key]=rec;
-  renderAxeSettings();   // toggle the axe panel when the projectile changes to/from axe
+  renderAxeSettings(); // toggle the axe panel when the projectile changes to/from axe
   setStatus('enemy tuned — kept when you Save level → mod');
 }
-function pruneEnemyTuning(sx,sy){        // enemy deleted -> drop its tuning from memory
+function pruneEnemyTuning(sx,sy){ // enemy deleted -> drop its tuning from memory
   if(state.chunk&&state.enemyTuning)delete state.enemyTuning[etKey(sx,sy)];
 }
-function moveEnemyTuning(from,to){       // enemy dragged -> its tuning follows to the new cell
+function moveEnemyTuning(from,to){ // enemy dragged -> its tuning follows to the new cell
   if(!state.enemyTuning)return;
   const rec=state.enemyTuning[etKey(from.sx,from.sy)];
   if(!rec)return;
@@ -270,6 +290,7 @@ function ensureSprite(tok){if(tok&&tok!=='-'&&!(tok in sprites))fetchSprites([to
 
 // ---------- palette ----------
 function renderPalette(el,items,getName,selKey){
+  if(!el)return;                 // the left tile/enemy lists were removed — nothing to fill
   el.innerHTML='';
   items.forEach(it=>{
     const name=getName(it);
@@ -284,14 +305,16 @@ function renderPalette(el,items,getName,selKey){
     const lbl=document.createElement('div');lbl.textContent=disp;sw.appendChild(lbl);
     if(ident){const id=document.createElement('div');id.className='ident';id.textContent=ident;sw.appendChild(id);}
     if(name===state[selKey]) sw.classList.add('sel');
-    sw.onclick=()=>{state[selKey]=name;el.querySelectorAll('.swatch').forEach(x=>x.classList.remove('sel'));sw.classList.add('sel');$('#selName').textContent=name+(ident?` (${ident})`:'');ensureSprite(name);updateFirebarPanel();if(state.dev)syncDev();};
+    sw.onclick=()=>{state[selKey]=name;el.querySelectorAll('.swatch').forEach(x=>x.classList.remove('sel'));sw.classList.add('sel');const sn=$('#selName');if(sn)sn.textContent=name+(ident?` (${ident})`:'');ensureSprite(name);updateFirebarPanel();if(state.dev)syncDev();};
     el.appendChild(sw);
   });
 }
 function buildPalettes(){
-  const tiles=(state.catalog.tiles||[]).filter(t=>!HIDDEN_CARRIERS.has(t.name));
+  const safe=!state.power; // dev-hidden tiles are unavailable to safe-mode users
+  const tiles=(state.catalog.tiles||[]).filter(t=>!HIDDEN_CARRIERS.has(t.name)&&!(safe&&isHidden(t.name)));
   renderPalette($('#tilePalette'),[{name:'-',category:'-'}].concat(tiles),t=>t.name,'selTile');
-  renderPalette($('#enemyPalette'),(state.catalog.enemies||[]).map(e=>({name:e.properties,category:'enemy_marker'})),e=>e.name,'selEnemy');
+  const enemies=(state.catalog.enemies||[]).filter(e=>!(safe&&isHidden(e.properties)));
+  renderPalette($('#enemyPalette'),enemies.map(e=>({name:e.properties,category:'enemy_marker'})),e=>e.name,'selEnemy');
   updateFirebarPanel();
 }
 async function refreshPaletteArt(){
@@ -299,42 +322,608 @@ async function refreshPaletteArt(){
   await fetchSprites(chips.map(c=>c.dataset.token));
   chips.forEach(c=>{const r=sprites[c.dataset.token];if(r&&r.img){c.style.backgroundImage=`url(${r.img.src})`;c.style.backgroundColor='transparent';}});
 }
-function filterPalette(inp,pal){const q=$(inp).value.toLowerCase();
+// After a sprite-fix edit, push the new art into EVERY on-screen view so the
+// palette bar, the open palette modal, and the open roster all show the same
+// sprite as the fix-panel preview and the canvas — no stale thumbnails.
+function syncSpriteViews(){
+  if(typeof renderPaletteBar==='function')renderPaletteBar();
+  const pm=$('#paletteModal'); if(pm&&!pm.classList.contains('hidden')){renderPalGrid();renderPalSrc();}
+  const gm=$('#galleryModal'); if(gm&&!gm.classList.contains('hidden'))buildGallery(state.galleryKind||'tiles');
+}
+function filterPalette(inp,pal){const ie=$(inp);if(!ie)return;const q=ie.value.toLowerCase();
   $$(pal+' .swatch').forEach(s=>{const hay=(s.dataset.name+' '+(s.dataset.label||'')).toLowerCase();
     s.style.display=hay.includes(q)?'':'none';});}
 
 // ---------- roster / "Browse all" gallery ----------
+let _rbStart=null,_rbBox=null,_rbMoved=false,_rbConsumed=false; // roster region-stamp rubber-band
+// Put a sprite into a roster cell's inner `.spr` layer, tagged with its size in
+// 16px game cells (--cw/--ch). CSS uses those to draw it at TRUE scale over the
+// cell grid (safe mode) so you can see how many cells a tile spans; power mode
+// just fills the cell.
+function applySpr(spr, rec){
+  spr.style.backgroundImage=`url(${rec.img.src})`;
+  // footprint in 16px game cells, capped so a giant sprite can't blow out a row
+  const cw=Math.min(8,Math.max(1,Math.round((rec.w||16)/16))), ch=Math.min(8,Math.max(1,Math.round((rec.h||16)/16)));
+  const host=(spr.closest&&spr.closest('.gswatch'))||spr.parentElement||spr; // the swatch spans --cw x --ch grid cells
+  host.style.setProperty('--cw',cw); host.style.setProperty('--ch',ch);
+}
+// every token for a gallery tab (tiles include the '-' eraser)
+function galTokens(kind){
+  return kind==='enemies'
+    ? (state.catalog.enemies||[]).map(e=>e.properties)
+    : ['-'].concat((state.catalog.tiles||[]).filter(t=>!HIDDEN_CARRIERS.has(t.name)).map(t=>t.name)); // one firebar/mace/etc.
+}
+// the normal roster's layout as an editable seed: tiles grouped under a cluster
+// per category (same as the browse view), so arranging edits what you already see.
+function categorySeed(kind){
+  if(kind==='enemies') return (state.catalog.enemies||[]).map(e=>e.properties);
+  const groups={};
+  (state.catalog.tiles||[]).filter(t=>!HIDDEN_CARRIERS.has(t.name))
+    .forEach(t=>{(groups[t.category]=groups[t.category]||[]).push(t.name);});
+  const out=['-'];
+  Object.keys(groups).sort().forEach(cat=>{ out.push({c:cat}); out.push(...groups[cat]); });
+  return out;
+}
+function catColorFor(tok){
+  const t=(state.catalog.tiles||[]).find(x=>x.name===tok);
+  return CAT_COLOR[t?t.category:'enemies']||'#555';
+}
+// the kind's dev layout array (tokens + {c:name} cluster dividers); create it
+// from the current token list on first use, and append any tokens not yet in it.
+function syncLayout(kind){
+  state.rosterLayout=state.rosterLayout||{};
+  const L=(state.rosterLayout[kind]=state.rosterLayout[kind]||galTokens(kind).slice());
+  const have=new Set(L.filter(e=>typeof e==='string'));
+  galTokens(kind).forEach(t=>{if(!have.has(t))L.push(t);});
+  return L;
+}
+// keep ~2 rows of empty slots at the end so there's always space to drop tiles
+// into; trailing empties are trimmed on Save (internal gaps are kept).
+function padEmpties(L){
+  while(L.length && L[L.length-1]==null) L.pop();
+  for(let i=0;i<40;i++) L.push(null);
+}
+// ---- explicit-position layout: the array IS a fixed-COLS 2D grid ------------
+// index i -> cell (i%COLS, floor(i/COLS)). A multi-cell tile sits at its top-left
+// index and its footprint cells are null (covered). Because positions are the
+// index, a move is a pure content swap: ONLY those two cells change, nothing flows.
+const ROSTER_COLS=24;
+function tileFP(tok){
+  const base=String(tok).split('@')[0], ang=splitTok(tok)[1];
+  if(tileCat(base)==='theme') return [1,1]; // themed blocks show as a single icon (they stamp 3x3 on the level)
+  const baked=sprites[tok], r=baked||sprites[base]; // baked @angle sprite already has rotated dims
+  let w=r?Math.min(6,Math.max(1,Math.round((r.w||16)/16))):1;
+  let h=r?Math.min(6,Math.max(1,Math.round((r.h||16)/16))):1;
+  if(!baked&&(ang===90||ang===270)){const t=w;w=h;h=t;} // only the un-baked base needs the quarter-turn swap
+  return [w,h];}
+// cells covered (but not the top-left) by any multi-cell tile in the grid
+function coveredCells(L){const cov=new Set();
+  L.forEach((e,i)=>{ if(typeof e!=='string')return; const[w,h]=tileFP(e);
+    for(let r=0;r<h;r++)for(let c=0;c<w;c++) if(r||c) cov.add(i+r*ROSTER_COLS+c); });
+  return cov;}
+// convert an order-list (tokens + clusters) into a positioned COLS-wide grid,
+// placing each tile in the first free cell that fits its footprint. Run ONCE
+// (after sprites are loaded); afterwards positions are stored and never reflow.
+function packLayout(kind){
+  const existing=state.rosterLayout[kind]||[];
+  // seed from the CATEGORY-grouped roster (the browse view) so editing looks the
+  // same as what you see; keep an existing custom layout if there is one.
+  const base=existing.some(e=>typeof e==='string')?existing:categorySeed(kind);
+  const have=new Set(base.filter(e=>typeof e==='string'));
+  const src=base.concat(galTokens(kind).filter(t=>!have.has(t))); // add any new tiles at the end
+  const grid=[]; const occ=new Set();
+  const put=(i,v)=>{ while(grid.length<=i) grid.push(null); grid[i]=v; };
+  const fits=(i,w,h)=>{ if(i%ROSTER_COLS + w > ROSTER_COLS) return false;
+    for(let r=0;r<h;r++)for(let c=0;c<w;c++) if(occ.has(i+r*ROSTER_COLS+c)) return false; return true; };
+  for(const e of src){
+    if(e&&typeof e==='object'&&e.c!=null){ // cluster header owns a full row
+      let i=Math.ceil(grid.length/ROSTER_COLS)*ROSTER_COLS;
+      put(i,e); occ.add(i);
+      for(let c=1;c<ROSTER_COLS;c++){ put(i+c,null); occ.add(i+c); }
+      continue;
+    }
+    if(e==null) continue;
+    const [w,h]=tileFP(e);
+    let i=0; while(!fits(i,w,h)) i++;
+    put(i,e);
+    for(let r=0;r<h;r++)for(let c=0;c<w;c++){ occ.add(i+r*ROSTER_COLS+c); if(r||c) put(i+r*ROSTER_COLS+c,null); }
+  }
+  for(let i=0;i<grid.length;i++) if(grid[i]===undefined) grid[i]=null;
+  for(let i=0;i<ROSTER_COLS*3;i++) grid.push(null); // trailing blank rows to drop into
+  state.rosterLayout[kind]=grid; state.rosterLayout.cols=ROSTER_COLS;
+}
+// tiles under a "Hidden" cluster in a kind's layout are invisible to safe-mode
+// users (still shown in Power/arrange so the dev can manage them).
+function hiddenSet(kind){
+  const L=state.rosterLayout&&state.rosterLayout[kind]; const s=new Set();
+  if(!Array.isArray(L))return s; let inH=false;
+  for(const e of L){
+    if(e&&typeof e==='object'&&e.c!=null){inH=String(e.c).trim().toLowerCase()==='hidden';continue;}
+    if(inH&&typeof e==='string')s.add(e);
+  }
+  return s;
+}
+function isHidden(tok){return hiddenSet('tiles').has(tok)||hiddenSet('enemies').has(tok);}
+// right-click in arrange: move a tile into the "Hidden" cluster (create it if absent)
+function sendToHidden(tok,kind){
+  const L=state.rosterLayout[kind]=state.rosterLayout[kind]||galTokens(kind).slice();
+  for(let i=L.length-1;i>=0;i--) if(L[i]===tok) L.splice(i,1); // pull it out of wherever it is
+  let hi=L.findIndex(e=>e&&typeof e==='object'&&String(e.c).trim().toLowerCase()==='hidden');
+  if(hi<0){L.push({c:'Hidden'});hi=L.length-1;} // make the Hidden cluster on demand
+  L.splice(hi+1,0,tok); // drop it in as the first hidden tile
+  buildGallery(kind);
+}
+// drag any element carrying data-idx to move it within the layout array
+function galDrag(el,kind){
+  el.draggable=true;
+  el.addEventListener('dragstart',e=>{state.galDrag=+el.dataset.idx;e.dataTransfer.effectAllowed='move';});
+  el.addEventListener('dragover',e=>{e.preventDefault();el.classList.add('dropinto');});
+  el.addEventListener('dragleave',()=>el.classList.remove('dropinto'));
+  el.addEventListener('drop',e=>{e.preventDefault();el.classList.remove('dropinto');
+    const from=state.galDrag,to=+el.dataset.idx;state.galDrag=null;
+    if(from==null||isNaN(to)||from===to)return;
+    const arr=state.rosterLayout[kind];
+    // multi-select: shift the whole selected block by the drag delta, swapping
+    // only those cells with wherever they land (nothing else reflows).
+    if(state.arrSel&&state.arrSel.size>1&&state.arrSel.has(arr[from])){
+      const delta=to-from, snap=arr.slice();
+      const idxs=[...state.arrSel].map(t=>arr.indexOf(t)).filter(i=>i>=0);
+      const sel=new Set(idxs);
+      const bad=idxs.some(i=>{const j=i+delta;return j<0||j>=arr.length||(snap[j]&&typeof snap[j]==='object');});
+      if(!bad) idxs.forEach(i=>{const j=i+delta;arr[j]=snap[i];if(!sel.has(j))arr[i]=snap[j];});
+      state.arrSel.clear(); buildGallery(kind); return;
+    }
+    const tmp=arr[to];arr[to]=arr[from];arr[from]=tmp; // single swap into the target slot
+    buildGallery(kind);});
+}
+function galSwatch(tok,idx,kind,selKey){
+  const disp=objLabel(tok);
+  const sw=document.createElement('div');sw.className='gswatch';sw.dataset.name=tok;sw.dataset.label=disp;
+  sw.title=(disp!==tok)?`${disp} — ${tok}`:tok;
+  if(tok===state[selKey])sw.classList.add('sel');
+  if(isHidden(tok))sw.classList.add('hidden-tile');
+  if(state.arrange&&state.arrSel&&state.arrSel.has(tok))sw.classList.add('arrsel');
+  if(idx!=null)sw.dataset.idx=idx;
+  const chip=document.createElement('div');chip.className='gchip';chip.dataset.token=tok;
+  const mk=trapKindOf(tok), mbase=String(tok).split('@')[0];
+  // firebar/spikeball/log each show their OWN sprite; the generic firebar cog is
+  // only a placeholder until the real art loads (so the three aren't identical).
+  if(mk&&ELEM_PANELS[mk]&&ELEM_PANELS[mk].mechanism==='mace'&&!(sprites[mbase]&&sprites[mbase].img)){
+    const fcv=document.createElement('canvas');fcv.width=fcv.height=64;fcv.className='fbthumb';
+    chip.appendChild(fcv);drawFirebarThumb(fcv);
+  }else{
+    const spr=document.createElement('div');spr.className='spr';chip.appendChild(spr);
+    const r=sprites[tok]||sprites[mbase]; if(r&&r.img)applySpr(spr,r);else chip.style.background=catColorFor(tok);
+  }
+  sw.appendChild(chip);
+  const lbl=document.createElement('div');lbl.textContent=disp;sw.appendChild(lbl);
+  sw.onclick=()=>{ if(_rbConsumed){_rbConsumed=false;return;} // a rubber-band drag, not a click
+    if(state.arrange)return; // arrange: handled by galArrangePointer
+    state[selKey]=tok;const sn=$('#selName');if(sn)sn.textContent=tok;ensureSprite(tok);
+    setTool(kind==='enemies'?'enemy':'paint');syncPaletteSel();hideGallery();};
+  if(state.arrange){
+    sw.title=(isHidden(tok)?'HIDDEN from users. ':'')+(sw.title||tok)+' · right-click to hide';
+    sw.oncontextmenu=ev=>{ev.preventDefault();sendToHidden(tok,kind);}; // right-click → Hidden cluster
+  }
+  return sw;
+}
 function buildGallery(kind){
   state.galleryKind=kind;
   $$('.gtab').forEach(b=>b.classList.toggle('active',b.dataset.gtab===kind));
   const grid=$('#galleryGrid'); grid.innerHTML='';
   const selKey=kind==='enemies'?'selEnemy':'selTile';
-  const items=kind==='enemies'
-    ? (state.catalog.enemies||[]).map(e=>({name:e.properties,category:'enemies'}))
-    : [{name:'-',category:'empty'}].concat((state.catalog.tiles||[]).map(t=>({name:t.name,category:t.category})));
-  const groups={}; items.forEach(it=>{(groups[it.category]=groups[it.category]||[]).push(it);});
-  Object.keys(groups).sort().forEach(cat=>{
-    const h=document.createElement('div');h.className='gcat';h.textContent=`${cat} · ${groups[cat].length}`;grid.appendChild(h);
-    const roster=document.createElement('div');roster.className='groster';grid.appendChild(roster);
-    groups[cat].forEach(it=>{
-      const disp=objLabel(it.name);
-      const sw=document.createElement('div');sw.className='gswatch';sw.dataset.name=it.name;sw.dataset.label=disp;
-      if(it.name===state[selKey])sw.classList.add('sel');
-      const chip=document.createElement('div');chip.className='gchip';chip.dataset.token=it.name;
-      const r=sprites[it.name]; if(r&&r.img)chip.style.backgroundImage=`url(${r.img.src})`;else chip.style.background=CAT_COLOR[it.category]||'#555';
-      sw.appendChild(chip);
-      const lbl=document.createElement('div');lbl.textContent=disp;sw.appendChild(lbl);
-      sw.onclick=()=>{state[selKey]=it.name;$('#selName').textContent=it.name;ensureSprite(it.name);
-        setTool(kind==='enemies'?'enemy':'paint');syncPaletteSel();hideGallery();};
-      roster.appendChild(sw);
+  state.rosterLayout=state.rosterLayout||{};
+  const useLayout=true; // roster is ALWAYS the positioned grid so any tile can be dragged to move — no mode
+  const fetchList=[];
+  if(useLayout){ // dev-authored grid — EXPLICIT positions
+    if(!(state.rosterLayout[kind]||[]).some(e=>typeof e==='string')){
+      // pack ONLY once real sprite sizes are known, otherwise every tile packs as
+      // 1x1 and then jumps when sprites load. Fetch ONCE, show a spinner, re-enter.
+      // (the '-' empty slot never has a sprite, so exclude it or we'd loop forever)
+      state._packFetched=state._packFetched||{};
+      const seed=categorySeed(kind).filter(e=>typeof e==='string'&&e!=='-');
+      const missing=seed.filter(t=>!(sprites[t]&&sprites[t].img));
+      if(missing.length&&!state._packFetched[kind]){
+        state._packFetched[kind]=true;
+        grid.innerHTML='<div class="gempty" style="grid-column:1/-1;padding:1em">loading tiles…</div>';
+        fetchSprites(missing).then(()=>buildGallery(kind),()=>buildGallery(kind)); return;
+      }
+      packLayout(kind);
+    }
+    const COLS=state.rosterLayout.cols||ROSTER_COLS;
+    const L=state.rosterLayout[kind]=state.rosterLayout[kind]||[];
+    const cov=coveredCells(L); // cells hidden under a spanning tile
+    const g=document.createElement('div');g.className='groster gridlayout';
+    g.style.gridTemplateColumns=`repeat(${COLS}, 28px)`; g.style.gridAutoRows='28px';
+    grid.appendChild(g);
+    let skipping=false; // inside the "Hidden" cluster in safe view
+    L.forEach((e,i)=>{
+      const col=i%COLS, row=Math.floor(i/COLS);
+      if(e&&typeof e==='object'&&e.c!=null){ // cluster header (full row)
+        const isHid=String(e.c).trim().toLowerCase()==='hidden';
+        if(isHid&&!state.arrange&&!state.power){skipping=true;return;}
+        skipping=false;
+        const h=document.createElement('div');h.className='gcat'+(isHid?' hiddencluster':'');h.dataset.idx=i;
+        h.style.gridColumn='1 / -1'; h.style.gridRow=(row+1);
+        const nm=document.createElement('span');nm.className='cname';nm.textContent=e.c;h.appendChild(nm);
+        if(state.arrange){
+          nm.contentEditable='true';nm.spellcheck=false;nm.title='Click to rename';
+          nm.addEventListener('input',()=>{state.rosterLayout[kind][i]={c:nm.textContent};});
+          nm.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();nm.blur();}});
+          const del=document.createElement('button');del.className='clusterdel';del.textContent='×';del.title='Delete cluster';
+          del.onclick=ev=>{ev.stopPropagation();state.rosterLayout[kind][i]=null;buildGallery(kind);}; // remove header, keep positions
+          h.appendChild(del);
+        }
+        g.appendChild(h); return;
+      }
+      if(skipping)return;
+      if(cov.has(i))return; // covered by a spanning tile
+      if(e==null){ // empty cell (drop target)
+        const em=document.createElement('div');em.className='gempty';em.dataset.idx=i;
+        em.style.gridColumn=(col+1); em.style.gridRow=(row+1);
+        g.appendChild(em); return;
+      }
+      const [w,hh]=tileFP(e);
+      const sw=galSwatch(e,i,kind,selKey);
+      sw.style.gridColumn=(col+1)+' / span '+w; sw.style.gridRow=(row+1)+' / span '+hh;
+      g.appendChild(sw); fetchList.push(e);
     });
-  });
-  fetchSprites(items.map(i=>i.name)).then(()=>{
-    grid.querySelectorAll('.gchip').forEach(c=>{const r=sprites[c.dataset.token];if(r&&r.img){c.style.backgroundImage=`url(${r.img.src})`;c.style.backgroundColor='transparent';}});
+  } else { // default: category grouping
+    let items=kind==='enemies'
+      ? (state.catalog.enemies||[]).map(e=>({name:e.properties,category:'enemies'}))
+      : [{name:'-',category:'empty'}].concat((state.catalog.tiles||[]).map(t=>({name:t.name,category:t.category})));
+    items=items.filter(it=>it.name==='-'||!HIDDEN_CARRIERS.has(it.name)); // one firebar/mace/etc. (rest editable in-panel)
+    if(!state.power&&!state.arrange) items=items.filter(it=>!isHidden(it.name)); // hide from safe users
+    const groups={}; items.forEach(it=>{(groups[it.category]=groups[it.category]||[]).push(it);});
+    Object.keys(groups).sort().forEach(cat=>{
+      const h=document.createElement('div');h.className='gcat';h.textContent=`${cat} · ${groups[cat].length}`;grid.appendChild(h);
+      const roster=document.createElement('div');roster.className='groster';grid.appendChild(roster);
+      groups[cat].forEach(it=>{roster.appendChild(galSwatch(it.name,null,kind,selKey));fetchList.push(it.name);});
+    });
+  }
+  document.body.classList.toggle('arranging',!!state.arrange);
+  $('#rosterAddCluster').hidden=$('#rosterSaveLayout').hidden=!state.arrange;
+  $('#rosterResetLayout').hidden=false; // always offer Reset so an accidental drag is easy to undo
+  const ab=$('#rosterArrange'); if(ab)ab.classList.toggle('active',!!state.arrange);
+  $('#galleryHint').textContent=state.arrange
+    ? 'Edit extras: click tiles to multi-select then drag one to move the group · right-click = Hide · rename clusters'
+    : 'click a tile to grab it · drag a tile to move it in the roster';
+  fetchSprites(fetchList).then(()=>{
+    grid.querySelectorAll('.gchip').forEach(c=>{if(c.querySelector('.fbthumb'))return;const r=sprites[c.dataset.token];
+      if(r&&r.img){let s=c.querySelector('.spr');if(!s){s=document.createElement('div');s.className='spr';c.appendChild(s);}applySpr(s,r);c.style.backgroundColor='transparent';}});
   });
 }
 function showGallery(){$('#galleryModal').classList.remove('hidden');buildGallery(state.galleryKind||'tiles');$('#gallerySearch').value='';$('#gallerySearch').focus();}
 function hideGallery(){$('#galleryModal').classList.add('hidden');}
+
+// ---- Tile palettes: curated 12x12 sets --------------------------------
+// Safe-mode users pick blocks from small predetermined palettes; power/dev
+// mode can build, clone, rearrange and save custom ones (tiles/palettes.json).
+const PAL_N=144; // 12 x 12
+async function loadPalettes(){
+  try{const d=await api().get_palettes();state.palettes=(d&&d.palettes)||[];}catch(e){state.palettes=[];}
+  if(state.palIdx==null||state.palIdx>=state.palettes.length)state.palIdx=0;
+}
+function curPal(){return (state.palettes||[])[state.palIdx]||null;}
+async function openPalette(){
+  $('#paletteModal').classList.remove('hidden');
+  if(!state.palettes||!state.palettes.length)await loadPalettes();
+  state.palEdit=true; // the manager opens ready to fill; players pick from the docked bar
+  renderPalHead();renderPalGrid();renderPalSrc();
+}
+function closePalette(){$('#paletteModal').classList.add('hidden');}
+function palSprCell(tok){
+  const c=document.createElement('div');c.className='palcell'+(tok?'':' empty');
+  if(tok){c.dataset.token=tok;c.title=objLabel(tok);
+    const base=String(tok).split('@')[0], ang=splitTok(tok)[1], mk=trapKindOf(base);
+    // mace elements (firebar/spikeball/log) each have their OWN art — draw that so
+    // they're distinguishable, not one shared generic firebar. Fall back to the
+    // procedural firebar cog only while the real sprite is still loading.
+    if(mk&&ELEM_PANELS[mk]&&ELEM_PANELS[mk].mechanism==='mace'&&!(sprites[base]&&sprites[base].img)){
+      const fcv=document.createElement('canvas');fcv.width=fcv.height=64;fcv.className='fbthumb';
+      if(ang)fcv.style.transform='rotate('+ang+'deg)';
+      c.appendChild(fcv);drawFirebarThumb(fcv);
+    }else{ // tile: canvas, rotated about its CENTRE (matches the level)
+      const fp=tileFP(tok),cv=document.createElement('canvas');cv.className='tthumb';cv.width=fp[0]*32;cv.height=fp[1]*32;
+      c.appendChild(cv);drawTileThumb(cv,tok);
+    }}
+  return c;
+}
+// draw a tile's sprite on a thumb canvas, contained and rotated about the canvas
+// centre — so a turned block stays put instead of drifting to a corner.
+function drawTileThumb(cv,tok){
+  const [base,ang]=splitTok(tok), baked=sprites[tok], rec=baked||sprites[base];
+  const g=cv.getContext('2d'); g.clearRect(0,0,cv.width,cv.height); g.imageSmoothingEnabled=false;
+  if(!(rec&&rec.img))return;
+  const useAng=baked?0:ang; // the baked @angle image is already rotated — don't spin it again
+  const swap=(useAng===90||useAng===270), ew=swap?rec.h:rec.w, eh=swap?rec.w:rec.h;
+  const sc=Math.min(cv.width/ew, cv.height/eh)*0.98;
+  const cf=spriteCenterFrac(rec); // put the ART centre at the canvas centre, then spin about it
+  g.save(); g.translate(cv.width/2,cv.height/2); if(useAng)g.rotate(useAng*Math.PI/180);
+  g.drawImage(rec.img,-cf[0]*rec.w*sc,-cf[1]*rec.h*sc,rec.w*sc,rec.h*sc); g.restore();
+  // baked marker (direction arrow / spin dot) — read the EXACT token's mark so a
+  // rotated instance shows its OWN arrow, not one shared across every rotation.
+  const arr=(sprites[tok]&&sprites[tok].arrow!=null)?sprites[tok].arrow
+           :(ang?null:(sprites[base]&&sprites[base].arrow));
+  if(arr!=null){const S=Math.min(cv.width,cv.height)*0.26, mx=cv.width/2, my=cv.height/2;
+    if(arr==='cw'||arr==='ccw')spinArrowG(g,mx,my,arr==='cw',S);
+    else if(arr==='S'||arr==='swing')swingMarkG(g,mx,my,S);
+    else orientArrowG(g,mx,my,+arr,S);}
+}
+function palApplyLoaded(box){box.querySelectorAll('canvas.tthumb').forEach(cv=>{
+  const c=cv.closest('.palcell'); if(c)drawTileThumb(cv,c.dataset.token);});}
+function renderPalHead(){
+  const sel=$('#palSel');sel.innerHTML='';
+  (state.palettes||[]).forEach((p,i)=>{const o=document.createElement('option');o.value=i;o.textContent=p.name||('Palette '+(i+1));sel.appendChild(o);});
+  sel.value=state.palIdx;
+  $('#palEdit').closest('label').style.display=''; // palette authoring is always available
+  const ed=!!state.palEdit; $('#palEdit').checked=ed;
+  ['palNew','palDel','palSave','palMoveUp','palMoveDn'].forEach(id=>$('#'+id).hidden=!ed);
+  if(ed){$('#palMoveUp').disabled=(state.palIdx<=0);$('#palMoveDn').disabled=(state.palIdx>=state.palettes.length-1);}
+  const nm=$('#palNameInput'); nm.hidden=!ed; if(ed&&curPal())nm.value=curPal().name||'';
+  $('#palEditBar').hidden=!ed;
+  $('#palHint').textContent=ed?'drag tiles in · click a placed tile to TURN it 90° · right-click to clear'
+                              :'click a block to grab it';
+}
+const PAL_COLS=12;
+function isMaceTok(tok){const mk=trapKindOf(tok);return !!(mk&&ELEM_PANELS[mk]&&ELEM_PANELS[mk].mechanism==='mace');}
+// cells covered (but not the top-left) by any multi-cell tile in a 12-wide grid
+function palCovered(cells){const cov=new Set();
+  cells.forEach((e,i)=>{if(!e)return;const[w,h]=tileFP(e),col=i%PAL_COLS,row=(i/PAL_COLS)|0;
+    for(let r=0;r<h;r++)for(let c=0;c<w;c++){if((r||c)&&col+c<PAL_COLS){const b=(row+r)*PAL_COLS+col+c;if(b<cells.length)cov.add(b);}}});
+  return cov;}
+// drop a token at slot i and clear the cells its footprint now covers (no overlap)
+function palPlace(cells,i,tok){cells[i]=tok;const[w,h]=tileFP(tok),col=i%PAL_COLS,row=(i/PAL_COLS)|0;
+  for(let r=0;r<h;r++)for(let c=0;c<w;c++){if((r||c)&&col+c<PAL_COLS){const b=(row+r)*PAL_COLS+col+c;if(b<cells.length)cells[b]=null;}}}
+function renderPalGrid(){
+  const p=curPal(),grid=$('#palGrid');grid.innerHTML='';
+  if(!p){grid.textContent='(no palette)';return;}
+  const cells=(p.cells||[]).slice(0,PAL_N);while(cells.length<PAL_N)cells.push(null);
+  p.cells=cells;
+  const cov=palCovered(cells);
+  cells.forEach((tok,i)=>{
+    if(cov.has(i))return; // hidden under a spanning tile
+    const col=i%PAL_COLS,row=(i/PAL_COLS)|0,[w,h]=tok?tileFP(tok):[1,1];
+    const c=palSprCell(tok);c.dataset.idx=i;
+    c.style.gridColumn=(col+1)+' / span '+w; c.style.gridRow=(row+1)+' / span '+h; // TRUE footprint size
+    c.onclick=()=>palCellClick(i);
+    c.oncontextmenu=e=>{e.preventDefault();if(state.palEdit){p.cells[i]=null;renderPalGrid();renderPaletteBar();}};
+    if(state.palEdit){ // drag TO fill / rearrange
+      if(tok){c.draggable=true;c.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/tok',tok);e.dataTransfer.effectAllowed='copyMove';state.palDragTok=tok;});}
+      c.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';c.classList.add('dragover');});
+      c.addEventListener('dragleave',()=>c.classList.remove('dragover'));
+      c.addEventListener('drop',e=>{e.preventDefault();c.classList.remove('dragover');
+        const t=(e.dataTransfer.getData('text/tok'))||state.palDragTok;state.palDragTok=null;
+        if(t){palPlace(p.cells,i,t);renderPalGrid();renderPaletteBar();}});
+    }
+    grid.appendChild(c);
+  });
+  const miss=cells.filter(t=>t&&!(t in sprites)); // fetch all (incl. mace) so firebar/spikeball/log show their own art
+  if(miss.length)fetchSprites(miss).then(()=>renderPalGrid()); // re-render once real sizes arrive (spans)
+}
+const PAL_MARKS=[null,0,45,90,135,180,225,270,315,'cw','ccw']; // arrow cycle: 8 dirs → spin cw/ccw → off
+async function palMarkCell(tok){
+  // Mark the EXACT token — including its @rotation — so a tile turned 90° carries
+  // its own arrow independent of the same tile at another angle. (A tile at 0° has
+  // no suffix, so its key is the bare id, unchanged.) The resolver keys overrides
+  // by the full token string, so `spring@90` and `spring` mark separately.
+  state.devOverrides=state.devOverrides||{};
+  const cur=Object.assign({},state.devOverrides[tok]);
+  const at=(cur.arrow==null?null:cur.arrow);
+  const next=PAL_MARKS[(PAL_MARKS.indexOf(at)+1+PAL_MARKS.length)%PAL_MARKS.length];
+  if(next==null)delete cur.arrow; else cur.arrow=next;
+  try{await api().set_sprite_override(tok,cur);}catch(e){}
+  state.devOverrides[tok]=cur;
+  if(sprites[tok])sprites[tok].arrow=(next==null?null:next); // only THIS rotation
+  renderPalGrid();renderPaletteBar();if(typeof draw==='function')draw();
+}
+function palCellClick(i){
+  const p=curPal();if(!p)return;
+  if(state.palEdit){
+    const tok=p.cells[i], tool=state.palTool||'paint';
+    if(tool==='turn'){ if(tok){const[b,a]=splitTok(tok);p.cells[i]=joinTok(b,(a+90)%360);renderPalGrid();renderPaletteBar();} return; }
+    if(tool==='mark'){ if(tok)palMarkCell(tok); return; }
+    if(state.palPen)palPlace(p.cells,i,state.palPen); // paint: a pen is loaded → paint it
+    else if(tok){const[b,a]=splitTok(tok);p.cells[i]=joinTok(b,(a+90)%360);} // paint, no pen → TURN the tile 90°
+    else return;
+    renderPalGrid();renderPaletteBar();return;
+  }
+  const tok=p.cells[i];if(!tok)return; // safe mode: grab the block
+  grabToken(tok);closePalette();
+}
+function palSizeCell(c,tok,base){const fp=tileFP(tok);c.style.width=(fp[0]*base)+'px';c.style.height=(fp[1]*base)+'px';}
+function renderPalSrc(){
+  if($('#palEditBar').hidden)return;
+  const box=$('#palSrc');box.innerHTML='';
+  const q=($('#palSearch')&&$('#palSearch').value||'').toLowerCase().trim();
+  // The palette-authoring SOURCE lists EVERY tile + enemy — including the element
+  // direction/variant carriers that the auto-built palettes collapse to one (so
+  // greenpipe_left, every conveyor frame, each spike orientation, … are all
+  // grabbable here). Nothing in the catalog is withheld from the editor.
+  const names=(state.catalog.tiles||[]).map(t=>t.name)
+    .concat((state.catalog.enemies||[]).map(e=>e.properties))
+    .filter(n=>!q||n.toLowerCase().includes(q)||objLabel(n).toLowerCase().includes(q));
+  const miss=[];
+  names.forEach(tok=>{const c=palSprCell(tok);c.classList.add('palsrccell');
+    palSizeCell(c,tok,24); // TRUE footprint size in the list
+    c.draggable=true;
+    c.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/tok',tok);e.dataTransfer.effectAllowed='copy';state.palDragTok=tok;});
+    c.onclick=()=>{state.palPen=(state.palPen===tok?null:tok); // click = load pen (paint by clicking cells)
+      box.querySelectorAll('.pensel').forEach(x=>x.classList.remove('pensel'));if(state.palPen)c.classList.add('pensel');};
+    if(!(sprites[tok]&&sprites[tok].img))miss.push(tok); // fetch mace art too (so firebar/spikeball/log differ)
+    box.appendChild(c);});
+  if(miss.length)fetchSprites(miss).then(()=>{palApplyLoaded(box);
+    box.querySelectorAll('.palsrccell').forEach(c=>palSizeCell(c,c.dataset.token,24));}); // resize once real sizes arrive
+}
+// grab a token (tile or enemy) as the active brush — used by the palette modal
+// and the docked palette bar above the canvas
+function grabToken(tok){
+  if(!tok)return; ensureSprite(tok);
+  const [base,ang]=splitTok(tok);
+  if((state.catalog.enemies||[]).some(e=>e.properties===base)){state.selEnemy=base;setTool('enemy');}
+  else{state.selTile=base;state.rot=ang||0;setTool('paint');updateSelInfo();} // carry the palette's rotation
+  syncPaletteSel();renderPaletteBar();
+}
+// the always-visible palette strip docked above the level canvas
+function renderPaletteBar(){
+  const sel=$('#palBarSel'); if(!sel)return;
+  sel.innerHTML='';
+  (state.palettes||[]).forEach((p,i)=>{const o=document.createElement('option');o.value=i;o.textContent=p.name||('Palette '+(i+1));sel.appendChild(o);});
+  sel.value=state.palIdx||0;
+  const p=curPal(),strip=$('#palBarStrip'); if(!strip)return; strip.innerHTML='';strip.removeAttribute('style');
+  if(!p)return;
+  const cells=p.cells||[];
+  // mirror the EXACT grid layout the dev built (same positions), cropped to the
+  // used area, so the bar looks like the editor's grid — no reflow.
+  let minR=99,minC=99,maxR=-1,maxC=-1;
+  cells.forEach((t,i)=>{if(!t)return;const c=i%PAL_COLS,r=(i/PAL_COLS)|0,[w,h]=tileFP(t);
+    minR=Math.min(minR,r);minC=Math.min(minC,c);maxR=Math.max(maxR,r+h-1);maxC=Math.max(maxC,c+w-1);});
+  if(maxR<0)return; // empty palette → hint shows
+  const B=20, cov=palCovered(cells), cur=(state.tool==='enemy')?state.selEnemy:state.selTile, miss=[];
+  strip.style.display='grid';
+  strip.style.gridTemplateColumns='repeat('+(maxC-minC+1)+','+B+'px)';
+  strip.style.gridAutoRows=B+'px';
+  cells.forEach((tok,i)=>{
+    if(!tok||cov.has(i))return;
+    const c=i%PAL_COLS,r=(i/PAL_COLS)|0,[w,h]=tileFP(tok);
+    const cell=palSprCell(tok);cell.classList.add('palbarcell');
+    cell.style.gridColumn=(c-minC+1)+' / span '+w; cell.style.gridRow=(r-minR+1)+' / span '+h;
+    if(tok===cur)cell.classList.add('pensel');
+    cell.onclick=()=>grabToken(tok);
+    if(!(tok in sprites))miss.push(tok); // fetch mace art too (distinct firebar/spikeball/log)
+    strip.appendChild(cell);
+  });
+  if(miss.length)fetchSprites(miss).then(()=>renderPaletteBar());
+}
+async function savePalettes(){try{await api().save_palettes({palettes:state.palettes});setStatus('palettes saved');renderPaletteBar();}catch(e){setStatus('save failed');}}
+
+// draggable dividers: let the user resize the tools (left) and palette (right)
+// columns. Widths persist in localStorage; the canvas re-fits as they drag.
+function setupColumnSplitters(){
+  const main=document.querySelector('main'); if(!main)return;
+  try{const s=JSON.parse(localStorage.getItem('colw')||'{}');
+    if(s.left) main.style.setProperty('--leftw', s.left+'px');
+    if(s.right)main.style.setProperty('--rightw',s.right+'px');}catch(e){}
+  const persist=()=>{try{localStorage.setItem('colw',JSON.stringify({
+      left:Math.round($('#left').getBoundingClientRect().width),
+      right:Math.round($('#right').getBoundingClientRect().width)}));}catch(e){}};
+  function wireSplit(el,which){
+    if(!el)return;
+    el.addEventListener('mousedown',e=>{
+      e.preventDefault(); el.classList.add('dragging'); document.body.classList.add('colresizing');
+      const startX=e.clientX;
+      const lw=$('#left').getBoundingClientRect().width, rw=$('#right').getBoundingClientRect().width;
+      const mv=ev=>{const dx=ev.clientX-startX;
+        if(which==='left') main.style.setProperty('--leftw', Math.max(140,Math.min(600,lw+dx))+'px');
+        else main.style.setProperty('--rightw',Math.max(160,Math.min(700,rw-dx))+'px');
+        if(typeof resizeCanvas==='function')resizeCanvas();};
+      const up=()=>{window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up);
+        el.classList.remove('dragging');document.body.classList.remove('colresizing');persist();};
+      window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);
+    });
+  }
+  wireSplit($('#splitL'),'left'); wireSplit($('#splitR'),'right');
+}
+// drag a box over the roster (Tiles tab, not arranging) to grab a rectangular
+// BLOCK of tiles as a multi-tile brush, then stamp it on the level (repeatable).
+function setupRosterRubberband(){
+  const grid=$('#galleryGrid');
+  grid.addEventListener('mousedown',e=>{
+    if(e.button!==0||state.arrange||state.galleryKind==='enemies')return;
+    _rbStart=[e.clientX,e.clientY];_rbMoved=false;
+  });
+  window.addEventListener('mousemove',e=>{
+    if(!_rbStart)return;
+    const dx=e.clientX-_rbStart[0],dy=e.clientY-_rbStart[1];
+    if(!_rbMoved&&Math.hypot(dx,dy)<6)return;
+    _rbMoved=true;e.preventDefault();
+    if(!_rbBox){_rbBox=document.createElement('div');_rbBox.className='rbbox';document.body.appendChild(_rbBox);}
+    const x=Math.min(e.clientX,_rbStart[0]),y=Math.min(e.clientY,_rbStart[1]),w=Math.abs(dx),h=Math.abs(dy);
+    Object.assign(_rbBox.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});
+    grid.querySelectorAll('.gswatch').forEach(sw=>{const r=sw.getBoundingClientRect();
+      sw.classList.toggle('rbsel', r.left<x+w&&r.right>x&&r.top<y+h&&r.bottom>y);});
+  });
+  window.addEventListener('mouseup',()=>{
+    if(!_rbStart)return; const moved=_rbMoved; _rbStart=null;
+    if(_rbBox){_rbBox.remove();_rbBox=null;}
+    const sel=[...grid.querySelectorAll('.gswatch.rbsel')];
+    grid.querySelectorAll('.gswatch.rbsel').forEach(s=>s.classList.remove('rbsel'));
+    if(!moved)return; // a plain click → swatch onclick handles it
+    _rbConsumed=true; // swallow the click that fires after this drag
+    if(sel.length)buildRosterStamp(sel);
+  });
+}
+// Arrange interaction (manual, so it's reliable): click a tile to toggle its
+// selection; drag a tile to MOVE it — if it's part of the selection the whole
+// selected block shifts by the drag delta, swapping only those cells. Uniform
+// cells mean array index == grid cell, so a move is a pure static swap.
+let _arrDrag=null, _saveLayoutT=null;
+// persist the roster arrangement shortly after a move (no Save click needed)
+function saveLayoutSoon(){
+  clearTimeout(_saveLayoutT);
+  _saveLayoutT=setTimeout(async()=>{
+    const snap=JSON.parse(JSON.stringify(state.rosterLayout||{}));
+    Object.values(snap).forEach(L=>{if(Array.isArray(L)){while(L.length&&L[L.length-1]==null)L.pop();}});
+    try{await api().save_roster_layout(snap);}catch(e){}
+  },600);
+}
+function setupArrangePointer(){
+  const grid=$('#galleryGrid');
+  grid.addEventListener('mousedown',e=>{
+    if(e.button!==0)return; // any tile is draggable, always
+    const sw=e.target.closest&&e.target.closest('.gswatch');
+    if(!sw||sw.dataset.idx==null)return;
+    _arrDrag={tok:sw.dataset.name,idx:+sw.dataset.idx,x0:e.clientX,y0:e.clientY,moved:false};
+  });
+  window.addEventListener('mousemove',e=>{
+    if(!_arrDrag)return;
+    if(!_arrDrag.moved&&Math.hypot(e.clientX-_arrDrag.x0,e.clientY-_arrDrag.y0)>5){_arrDrag.moved=true;e.preventDefault();}
+  });
+  window.addEventListener('mouseup',e=>{
+    if(!_arrDrag)return; const d=_arrDrag; _arrDrag=null;
+    const kind=state.galleryKind, arr=state.rosterLayout[kind]; if(!Array.isArray(arr))return;
+    if(!d.moved){ // no drag = a plain click
+      if(!state.arrange)return; // → let the swatch onclick grab the tile to paint
+      state.arrSel=state.arrSel||new Set(); // Edit mode only: click toggles multi-select
+      if(state.arrSel.has(d.tok))state.arrSel.delete(d.tok);else state.arrSel.add(d.tok);
+      const sw=[...grid.querySelectorAll('.gswatch')].find(s=>+s.dataset.idx===d.idx);
+      if(sw)sw.classList.toggle('arrsel'); return;
+    }
+    _rbConsumed=true; // a drag happened — swallow the click that follows so it doesn't paint
+    const el=document.elementFromPoint(e.clientX,e.clientY); // drag → where did it land?
+    const tgt=el&&el.closest&&el.closest('.gswatch,.gempty');
+    if(!tgt||tgt.dataset.idx==null)return;
+    const to=+tgt.dataset.idx, from=d.idx; if(to===from)return;
+    if(state.arrSel&&state.arrSel.size>1&&state.arrSel.has(arr[from])){ // move the whole selected block
+      const delta=to-from, snap=arr.slice();
+      const idxs=[...state.arrSel].map(t=>arr.indexOf(t)).filter(i=>i>=0), sel=new Set(idxs);
+      const bad=idxs.some(i=>{const j=i+delta;return j<0||j>=arr.length||(snap[j]&&typeof snap[j]==='object');});
+      if(!bad)idxs.forEach(i=>{const j=i+delta;arr[j]=snap[i];if(!sel.has(j))arr[i]=snap[j];});
+      state.arrSel.clear();
+    } else if(!(arr[to]&&typeof arr[to]==='object')){ // single tile: swap its whole footprint region
+      const COLS=state.rosterLayout.cols||ROSTER_COLS, [w,h]=tileFP(arr[from]), snap=arr.slice();
+      let ok = to%COLS + w <= COLS && from%COLS + w <= COLS;
+      for(let r=0;r<h&&ok;r++)for(let c=0;c<w;c++){const b=to+r*COLS+c;
+        if(b<0||b>=arr.length||(snap[b]&&typeof snap[b]==='object')){ok=false;break;}}
+      if(ok)for(let r=0;r<h;r++)for(let c=0;c<w;c++){
+        const a=from+r*COLS+c, b=to+r*COLS+c; const t=arr[b];arr[b]=arr[a];arr[a]=t;}
+    }
+    buildGallery(kind); saveLayoutSoon();
+  });
+}
+function buildRosterStamp(swatches){
+  const pitch=29; // 28px grid cell + 1px gap
+  const items=swatches.map(sw=>{const r=sw.getBoundingClientRect();return {tok:sw.dataset.name,x:r.left,y:r.top};});
+  const minx=Math.min(...items.map(i=>i.x)),miny=Math.min(...items.map(i=>i.y));
+  items.forEach(i=>{i.col=Math.round((i.x-minx)/pitch);i.row=Math.round((i.y-miny)/pitch);});
+  const w=Math.max(...items.map(i=>i.col))+1,h=Math.max(...items.map(i=>i.row))+1;
+  if(w>64||h>64){setStatus('selection too big — pick a smaller block',true);return;}
+  const cells=Array.from({length:h},()=>Array.from({length:w},()=>'-'));
+  items.forEach(i=>{if(i.tok&&i.tok!=='-')cells[i.row][i.col]=i.tok;});
+  state.clipboard={w,h,cells};
+  hideGallery();enterStamp();
+  setStatus(`stamp ${w}×${h} from roster — click the level to place · Esc / right-click to stop`);
+}
 function filterGallery(){const q=$('#gallerySearch').value.toLowerCase();
   $$('#galleryGrid .gswatch').forEach(s=>{const hay=(s.dataset.name+' '+(s.dataset.label||'')).toLowerCase();
     s.style.display=hay.includes(q)?'':'none';});
@@ -354,6 +943,23 @@ function resizeCanvas(){
 function s2w(sx,sy){return [(sx-state.view.ox)/state.view.scale,(sy-state.view.oy)/state.view.scale];}
 function s2cell(sx,sy){const [wx,wy]=s2w(sx,sy);return [Math.floor(wx/CELL),Math.floor(wy/CELL)];}
 
+// centre of a sprite's OPAQUE pixels, as fractions (0..1) of its image — so we
+// can rotate a block about the middle of its art even when the art sits off-centre
+// (padded) in the image. Computed once per sprite and cached on the record.
+function spriteCenterFrac(rec){
+  if(rec._cf)return rec._cf;
+  let fx=0.5,fy=0.5;
+  try{
+    const iw=rec.img.naturalWidth||rec.w, ih=rec.img.naturalHeight||rec.h;
+    const cn=document.createElement('canvas');cn.width=iw;cn.height=ih;
+    const g=cn.getContext('2d');g.drawImage(rec.img,0,0);
+    const d=g.getImageData(0,0,iw,ih).data;
+    let minx=iw,miny=ih,maxx=-1,maxy=-1;
+    for(let y=0;y<ih;y++)for(let x=0;x<iw;x++){if(d[(y*iw+x)*4+3]>16){if(x<minx)minx=x;if(x>maxx)maxx=x;if(y<miny)miny=y;if(y>maxy)maxy=y;}}
+    if(maxx>=0){fx=((minx+maxx+1)/2)/iw;fy=((miny+maxy+1)/2)/ih;}
+  }catch(e){}
+  rec._cf=[fx,fy];return rec._cf;
+}
 // draw a sprite for a cell whose origin (top-left) is (x,y).
 // game-accurate: place the sprite by its pivot exactly as the game does — the
 // pivot point sits at the cell origin, so wide/tall sprites overflow in the
@@ -370,14 +976,16 @@ function blit(rec,x,y){
     // prefab local-position offset (cells -> px); resolver already flips y to screen-down
     const ox=(rec.ox??0)*CELL, oy=(rec.oy??0)*CELL;
     const dx=x+ox-px*rec.w, dy=y+oy-(1-py)*rec.h;
-    if(rot){const pvx=x+ox, pvy=y+oy;        // rotate about the pivot point (cell origin+offset)
-      ctx.save();ctx.translate(pvx,pvy);ctx.rotate(rr);ctx.translate(-pvx,-pvy);
+    if(rot){const cf=spriteCenterFrac(rec), cxp=dx+cf[0]*rec.w, cyp=dy+cf[1]*rec.h; // rotate about the ART centre
+      ctx.save();ctx.translate(cxp,cyp);ctx.rotate(rr);ctx.translate(-cxp,-cyp);
       ctx.drawImage(rec.img,dx,dy,rec.w,rec.h);ctx.restore();}
     else ctx.drawImage(rec.img,dx,dy,rec.w,rec.h);
   }else{
     const sc=Math.min(CELL/rec.w,CELL/rec.h),dw=rec.w*sc,dh=rec.h*sc;
-    if(rot){ctx.save();ctx.translate(x+CELL/2,y+CELL/2);ctx.rotate(rr);
-      ctx.drawImage(rec.img,-dw/2,-dh/2,dw,dh);ctx.restore();}
+    if(rot){const cf=spriteCenterFrac(rec); // rotate about the ART centre, not the image box
+      const ix=x+(CELL-dw)/2, iy=y+(CELL-dh)/2, cxp=ix+cf[0]*dw, cyp=iy+cf[1]*dh;
+      ctx.save();ctx.translate(cxp,cyp);ctx.rotate(rr);ctx.translate(-cxp,-cyp);
+      ctx.drawImage(rec.img,ix,iy,dw,dh);ctx.restore();}
     else ctx.drawImage(rec.img,x+(CELL-dw)/2,y+(CELL-dh)/2,dw,dh);
   }
 }
@@ -388,10 +996,20 @@ function blit(rec,x,y){
 // override hand-anchored it (rec.ov), which uses the pivot placement instead.
 function enemyBlit(rec,x,y){
   // An enemy spawns at its cell CENTRE in-game (transform at col*16+8, row*16+8),
-  // unlike a tile whose pivot sits at the cell ORIGIN. So a hand-anchored enemy must
-  // have its pivot placed at the cell centre, else it renders half a block up-left of
-  // its marker (the +CELL/2 on both axes). Non-override enemies are already centred.
-  if(rec.ov){blit(rec,x+CELL/2,y+CELL/2);return;}
+  // unlike a tile whose pivot sits at the cell ORIGIN. A hand-anchored enemy is
+  // pivot-placed about the cell centre; a plain enemy is centred. EITHER way an
+  // enemy draws at its NATURAL size — never contained to one cell — so a tall
+  // sprite (e.g. cactusbig 28x120) doesn't shrink to an invisible sliver.
+  if(rec.ov){
+    const cx=x+CELL/2, cy=y+CELL/2;
+    const px=rec.px??0.5, py=rec.py??0.5, ox=(rec.ox??0)*CELL, oy=(rec.oy??0)*CELL;
+    const dx=cx+ox-px*rec.w, dy=cy+oy-(1-py)*rec.h, rot=rec.rot||0;
+    if(rot){const rr=rot*Math.PI/180, cf=spriteCenterFrac(rec), pvx=dx+cf[0]*rec.w, pvy=dy+cf[1]*rec.h;
+      ctx.save();ctx.translate(pvx,pvy);ctx.rotate(rr);ctx.translate(-pvx,-pvy);
+      ctx.drawImage(rec.img,dx,dy,rec.w,rec.h);ctx.restore();}
+    else ctx.drawImage(rec.img,dx,dy,rec.w,rec.h);
+    return;
+  }
   ctx.drawImage(rec.img,x+CELL/2-rec.w/2,y+CELL/2-rec.h/2,rec.w,rec.h);
 }
 function drawLayer(grid,alpha){
@@ -399,7 +1017,7 @@ function drawLayer(grid,alpha){
   ctx.globalAlpha=alpha;
   for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
     const t=grid[r][c]; if(t==='-') continue;
-    if(state.firebars&&state.firebars[splitTok(t)[0]]) continue;  // drawn by drawFirebars (cog + dots)
+    if(state.firebars&&state.firebars[splitTok(t)[0]]) continue; // drawn by drawFirebars (cog + dots)
     const rec=sprites[t];
     const x=c*CELL,y=r*CELL;
     if(rec&&rec.img) blit(rec,x,y);
@@ -448,7 +1066,7 @@ function draw(){
 // pivot, both sides if double, in the start direction) + a spin/swing indicator
 // on the pivot. So the editor shows length/position instead of a lone ball.
 const FB_DIR={right:[1,0],left:[-1,0],up:[0,-1],down:[0,1]};
-let fbDot=null;          // firebar ball sprite Image (tile_fire-2, from backend)
+let fbDot=null; // firebar ball sprite Image (tile_fire-2, from backend)
 // A firebar renders like the game: a grey cog at the pivot + exactly `length`
 // ball sprites forming the arm, in the start direction (both sides if double).
 // One placed token = one firebar; a small spin/swing badge marks the motion.
@@ -469,12 +1087,27 @@ function drawFirebarAt(c,r,cfg){
                 cfg.circular?(cfg.clockwise?'cw':'ccw'):'S', CELL*0.24);
   ctx.restore();
 }
+// a small firebar (cog + a short bar of balls) drawn into a roster chip's own
+// canvas — so the mace/firebar/log element shows as itself, not a blank sprite.
+function drawFirebarThumb(cv){
+  const g=cv.getContext('2d'), W=cv.width, u=W/5, cx=u*0.65, cy=cv.height/2;
+  g.clearRect(0,0,W,cv.height);
+  for(let k=1;k<=4;k++){const x=cx+k*u,y=cy;
+    if(fbDot&&fbDot.complete&&fbDot.naturalWidth){const s=u/Math.max(fbDot.naturalWidth,fbDot.naturalHeight);
+      g.drawImage(fbDot,x-fbDot.naturalWidth*s/2,y-fbDot.naturalHeight*s/2,fbDot.naturalWidth*s,fbDot.naturalHeight*s);}
+    else{g.lineWidth=u*0.16;g.strokeStyle='#d23a2c';g.beginPath();g.arc(x,y,u*0.3,0,7);g.stroke();}}
+  g.fillStyle='#8b919c';for(let i=0;i<8;i++){const a=i*Math.PI/4;g.save();
+    g.translate(cx+Math.cos(a)*u*0.3,cy+Math.sin(a)*u*0.3);g.rotate(a);g.fillRect(-u*0.06,-u*0.06,u*0.12,u*0.12);g.restore();}
+  g.fillStyle='#9aa0ab';g.beginPath();g.arc(cx,cy,u*0.3,0,7);g.fill();
+}
 function drawFirebars(){
   const fb=state.firebars; if(!fb)return;
-  const g=state.chunk.grid;
-  for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
-    const tok=g[r][c]; if(tok==='-')continue;
-    const cfg=fb[splitTok(tok)[0]]; if(cfg)drawFirebarAt(c,r,cfg);
+  for(const g of [state.chunk.grid, state.chunk.grid2]){ // grid 1 AND grid 2 (aligned overlay)
+    if(!g)continue;
+    for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
+      const tok=g[r]&&g[r][c]; if(!tok||tok==='-')continue;
+      const cfg=fb[splitTok(tok)[0]]; if(cfg)drawFirebarAt(c,r,cfg);
+    }
   }
 }
 // the firebar ball: the real tile_fire-2 sprite (a red ring; over the dark grid
@@ -492,11 +1125,11 @@ function drawFireDot(x,y){
 // a grey gear at the pivot (the firebar's rotation centre).
 function drawCog(x,y){
   const cx=x+CELL/2, cy=y+CELL/2, R=CELL*0.30;
-  ctx.fillStyle='#8b919c';                       // teeth ring
+  ctx.fillStyle='#8b919c'; // teeth ring
   for(let i=0;i<8;i++){const a=i*Math.PI/4;
     ctx.save();ctx.translate(cx+Math.cos(a)*R,cy+Math.sin(a)*R);ctx.rotate(a);
     ctx.fillRect(-CELL*0.06,-CELL*0.06,CELL*0.12,CELL*0.12);ctx.restore();}
-  ctx.fillStyle='#9aa0ab';ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill();        // body
+  ctx.fillStyle='#9aa0ab';ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill(); // body
   ctx.fillStyle='#3c4049';ctx.beginPath();ctx.arc(cx,cy,CELL*0.12,0,7);ctx.fill();// hub
 }
 function drawRotationMarks(){
@@ -505,12 +1138,15 @@ function drawRotationMarks(){
   // rotation suffix on the token, OR a hand-authored arrow baked into the sprite
   // (sprite_overrides.json) for directional tiles that share one symmetric sprite.
   if(!state.showRot)return;
-  const g=state.chunk.grid;
-  for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
-    const tok=g[r][c]; if(tok==='-')continue;
-    let arrow=splitTok(tok)[1];
-    if(!arrow){const rc=sprites[tok]; if(rc&&rc.arrow!=null)arrow=rc.arrow; else continue;}
-    drawArrowMark(c*CELL+CELL/2, r*CELL+CELL/2, arrow);
+  for(const g of [state.chunk.grid, state.chunk.grid2]){ // grid 1 AND grid 2
+    if(!g)continue;
+    for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
+      const tok=g[r]&&g[r][c]; if(!tok||tok==='-')continue;
+      // no badge for @angle rotation — the rotated sprite already shows it. Only
+      // draw for tiles with a hand-authored arrow (symmetric directional sprites).
+      const rc=sprites[tok]; if(!rc||rc.arrow==null)continue;
+      drawArrowMark(c*CELL+CELL/2, r*CELL+CELL/2, rc.arrow);
+    }
   }
 }
 // Arrow marks render as a BOLD yellow rounded square with a thick BLACK arrow on
@@ -518,7 +1154,7 @@ function drawRotationMarks(){
 // 90=left … 315=up-right) → straight arrow, or 'cw'/'ccw' → spin arrow. S is the
 // badge half-size in the target context's units (world px on the main canvas).
 function drawArrowMark(cx,cy,arrow,S){
-  S=S||CELL*0.28;          // small badge by default (matches the firebar icon)
+  S=S||CELL*0.28; // small badge by default (matches the firebar icon)
   if(arrow==='cw'||arrow==='ccw') spinArrowG(ctx,cx,cy,arrow==='cw',S);
   else if(arrow==='S'||arrow==='swing') swingMarkG(ctx,cx,cy,S);
   else orientArrowG(ctx,cx,cy,+arrow,S);
@@ -535,7 +1171,7 @@ function _roundRectPath(g,x,y,w,h,r){
   g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);
   g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath();
 }
-function _arrowBadge(g,cx,cy,S){            // yellow rounded square behind the glyph
+function _arrowBadge(g,cx,cy,S){ // yellow rounded square behind the glyph
   _roundRectPath(g,cx-S,cy-S,S*2,S*2,S*0.26);
   g.fillStyle='#ffd400';g.fill();
   g.lineWidth=S*0.12;g.strokeStyle='rgba(0,0,0,.6)';g.stroke();
@@ -544,30 +1180,30 @@ function _arrowBadge(g,cx,cy,S){            // yellow rounded square behind the 
 function orientArrowG(g,cx,cy,ang,S){
   _arrowBadge(g,cx,cy,S);
   const rad=-ang*Math.PI/180, ux=Math.sin(rad), uy=-Math.cos(rad), px=-uy, py=ux;
-  const tipx=cx+ux*S*0.72, tipy=cy+uy*S*0.72;     // head tip
-  const basex=cx+ux*S*0.04, basey=cy+uy*S*0.04;   // head base centre
-  const tailx=cx-ux*S*0.66, taily=cy-uy*S*0.66;   // stem tail
+  const tipx=cx+ux*S*0.72, tipy=cy+uy*S*0.72; // head tip
+  const basex=cx+ux*S*0.04, basey=cy+uy*S*0.04; // head base centre
+  const tailx=cx-ux*S*0.66, taily=cy-uy*S*0.66; // stem tail
   g.strokeStyle='#000';g.fillStyle='#000';g.lineCap='round';g.lineJoin='round';
   g.lineWidth=S*0.34;
-  g.beginPath();g.moveTo(tailx,taily);g.lineTo(basex,basey);g.stroke();   // thick stem
-  const hw=S*0.56;                                 // head half-width
+  g.beginPath();g.moveTo(tailx,taily);g.lineTo(basex,basey);g.stroke(); // thick stem
+  const hw=S*0.56; // head half-width
   g.beginPath();g.moveTo(tipx,tipy);
   g.lineTo(basex+px*hw,basey+py*hw);
   g.lineTo(basex-px*hw,basey-py*hw);
-  g.closePath();g.fill();                           // big triangular head
+  g.closePath();g.fill(); // big triangular head
 }
 // black circular spin arrow inside a yellow badge; cw=true clockwise.
 function spinArrowG(g,cx,cy,cw,S){
   _arrowBadge(g,cx,cy,S);
   const R=S*0.52, gap=Math.PI*0.55;
   let a0,a1;
-  if(cw){a0=-Math.PI/2+gap/2; a1=a0+(2*Math.PI-gap);}      // canvas +angle = CW (y-down)
-  else  {a0=-Math.PI/2-gap/2; a1=a0-(2*Math.PI-gap);}
+  if(cw){a0=-Math.PI/2+gap/2; a1=a0+(2*Math.PI-gap);} // canvas +angle = CW (y-down)
+  else {a0=-Math.PI/2-gap/2; a1=a0-(2*Math.PI-gap);}
   g.strokeStyle='#000';g.fillStyle='#000';g.lineCap='round';g.lineJoin='round';
   g.lineWidth=S*0.28;
   g.beginPath();g.arc(cx,cy,R,a0,a1,!cw);g.stroke();
-  const ex=cx+Math.cos(a1)*R, ey=cy+Math.sin(a1)*R;        // head at arc end
-  const tx=cw?-Math.sin(a1):Math.sin(a1), ty=cw?Math.cos(a1):-Math.cos(a1);  // travel dir
+  const ex=cx+Math.cos(a1)*R, ey=cy+Math.sin(a1)*R; // head at arc end
+  const tx=cw?-Math.sin(a1):Math.sin(a1), ty=cw?Math.cos(a1):-Math.cos(a1); // travel dir
   const hL=S*0.52, px=-ty, py=tx;
   g.beginPath();g.moveTo(ex+tx*hL*0.5,ey+ty*hL*0.5);
   g.lineTo(ex-tx*hL*0.5+px*hL*0.62,ey-ty*hL*0.5+py*hL*0.62);
@@ -578,7 +1214,7 @@ function drawAutotileMarks(){
   // autotile edge variants are generated procedurally at runtime (no per-edge
   // sprites to preview), so just flag autotile cells so the designer sees them.
   ctx.fillStyle='#3aa98a';
-  for(const L of ['bg','active','fg']){const g=layerGrid(L);if(!g||!state.layerVis[L])continue;
+  for(const L of ['bg','active','fg','grid2']){const g=layerGrid(L);if(!g||!state.layerVis[L])continue;
     for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
       if(String(g[r][c]).startsWith('Autotile')){ctx.beginPath();
         ctx.moveTo(c*CELL,r*CELL);ctx.lineTo(c*CELL+5,r*CELL);ctx.lineTo(c*CELL,r*CELL+5);ctx.fill();}
@@ -596,9 +1232,10 @@ function drawBrushGhost(){
   if(state.preview||!state.hover||state.drag)return;
   if(state.tool!=='paint'&&state.tool!=='enemy')return;
   const [c,r]=state.hover;if(!inBounds(c,r))return;
-  const isEnemy=state.tool==='enemy', tok=isEnemy?state.selEnemy:state.selTile;
+  const isEnemy=state.tool==='enemy', tok=isEnemy?state.selEnemy:joinTok(state.selTile,state.rot); // carry the rotation in-hand
   const fcfg=!isEnemy&&state.firebars&&state.firebars[splitTok(tok)[0]];
-  ctx.globalAlpha=0.45;const rec=sprites[tok];
+  ctx.globalAlpha=0.45;let rec=sprites[tok];
+  if(!isEnemy&&tok!=='-'&&!rec){ensureSprite(tok);rec=sprites[tok];} // fetch the rotated sprite if needed
   // render through the SAME path the placed version uses, so the ghost preview
   // matches exactly what gets stamped (firebars draw cog+dots, enemies centre, tiles blit).
   if(fcfg)drawFirebarAt(c,r,fcfg);
@@ -611,7 +1248,7 @@ function drawObjects(){
   // paths (lines + grabbable vertex handles; active path brighter; direction
   // arrows along each segment; a diamond start marker on the first vertex)
   ctx.lineWidth=1.2/state.view.scale;
-  const ah=3.6/state.view.scale;        // arrow half-size in world px
+  const ah=3.6/state.view.scale; // arrow half-size in world px
   (state.chunk.paths||[]).forEach(p=>{
     if(!p.pts||!p.pts.length)return;
     const active=p===state.activePath;const col=active?'#9be8ff':'#5ad1ff';
@@ -650,7 +1287,7 @@ function drawObjects(){
       enemyBlit(rec,x,y);
       if(state.showRot&&rec.arrow!=null)drawArrowMark(x+CELL/2,y+CELL/2,rec.arrow);
     }
-    else {ctx.fillStyle='#ff5a5a55';ctx.fillRect(x+1,y+1,CELL-2,CELL-2);}   // no resolvable art → filled marker
+    else {ctx.fillStyle='#ff5a5a55';ctx.fillRect(x+1,y+1,CELL-2,CELL-2);} // no resolvable art → filled marker
     ctx.strokeStyle=(state.dragEnemy===e)?'#56c271':'#ff5a5a';
     ctx.lineWidth=1.4/state.view.scale;ctx.strokeRect(x+1,y+1,CELL-2,CELL-2);
   });
@@ -697,7 +1334,7 @@ function rotateCell(c,r,delta){
   }else{state.rot=((state.rot+delta)%360+360)%360;}
   updateSelInfo();draw();
 }
-function updateSelInfo(){const id=tileLabel(state.selTile);$('#selName').textContent=state.selTile+(id?` (${id})`:'')+(state.rot?` ↻${state.rot}°`:'');updateFirebarPanel();if(state.dev)syncDev();}
+function updateSelInfo(){const id=tileLabel(state.selTile);const sn=$('#selName');if(sn)sn.textContent=state.selTile+(id?` (${id})`:'')+(state.rot?` ↻${state.rot}°`:'');updateFirebarPanel();if(state.dev)syncDev();}
 
 // ---------- dev mode: hand-edit a sprite's draw anchor / arrow ----------
 // The resolver places most sprites right, but some composite/placeholder tiles
@@ -711,7 +1348,7 @@ async function setDevMode(on){
   state.dev=on; $('#devPanel').hidden=!on;
   if(on){
     try{state.devOverrides=await api().get_sprite_overrides()||{};}catch(e){}
-    if(!state.artNames.length){                     // load art-name list once
+    if(!state.artNames.length){ // load art-name list once
       try{const names=await api().list_art_names()||[];
         state.artNames=names;
         // the autocomplete datalist is just a convenience — cap it so a 14k-option
@@ -780,8 +1417,8 @@ function devVals(){
   const num=(id,d)=>{const v=parseFloat($(id).value);return isNaN(v)?d:v;};
   const art=$('#devArt').value.trim();
   return {px:num('#devPx',0),py:num('#devPy',1),ox:num('#devOx',0),oy:num('#devOy',0),
-          rot:0,                    // rotation removed — each orientation is its own block/token
-          arrow:null,               // arrows removed too
+          rot:0, // rotation removed — each orientation is its own block/token
+          arrow:null, // arrows removed too
           art:art||null};
 }
 // live-apply inputs to the in-memory sprite so the main canvas updates as you
@@ -793,14 +1430,14 @@ function devLive(src){
   if(pair)$('#'+pair).value=$('#dev'+src.charAt(0).toUpperCase()+src.slice(1)).value;
   const rec=sprites[state.devTok]; if(rec){const v=devVals();
     rec.px=v.px;rec.py=v.py;rec.ox=v.ox;rec.oy=v.oy;rec.rot=v.rot;rec.arrow=v.arrow;rec.ov=true;}
-  draw();drawDevPreview();
+  draw();drawDevPreview();syncSpriteViews();
 }
 // live-preview a different art SOURCE (its image differs, so resolve on the
 // backend without persisting), keeping the current anchor/rot/arrow inputs.
 async function devPreviewArt(){
   if(!state.dev||!state.devTok)return;
   const tok=state.devTok, r=await api().preview_sprite_override(tok,devVals());
-  if(r&&r.rec)loadRecInto(tok,r.rec,()=>{draw();drawDevPreview();});
+  if(r&&r.rec)loadRecInto(tok,r.rec,()=>{draw();drawDevPreview();syncSpriteViews();});
   else if(r&&r.rec===null){setStatus('that art name didn’t resolve',true);}
 }
 // ---- visual sprite picker (big thumbnail roster) ----
@@ -813,7 +1450,7 @@ function openArtPicker(){
   state.devTok=devToken();
   $('#artModalTok').textContent=state.devTok||'(none)';
   $('#artModal').classList.remove('hidden');
-  $('#artSearch').value='';                               // default: show the whole roster
+  $('#artSearch').value=''; // default: show the whole roster
   renderArtGrid(); $('#artSearch').focus();
 }
 function closeArtPicker(){$('#artModal').classList.add('hidden');if(_artIO){_artIO.disconnect();_artIO=null;}}
@@ -879,11 +1516,11 @@ function loadRecInto(tok,rec,then){
 function drawDevPreview(){
   const cvp=$('#devPrev');if(!cvp)return;const p=cvp.getContext('2d');
   const W=cvp.width,H=cvp.height;p.clearRect(0,0,W,H);p.imageSmoothingEnabled=false;
-  const Z=Math.floor(Math.min(W,H)/3), x0=Z, y0=Z;   // origin cell = middle of 3×3
+  const Z=Math.floor(Math.min(W,H)/3), x0=Z, y0=Z; // origin cell = middle of 3×3
   p.strokeStyle='rgba(255,255,255,.10)';p.lineWidth=1;
   for(let i=0;i<=3;i++){p.beginPath();p.moveTo(i*Z+.5,0);p.lineTo(i*Z+.5,3*Z);p.stroke();
     p.beginPath();p.moveTo(0,i*Z+.5);p.lineTo(3*Z,i*Z+.5);p.stroke();}
-  p.strokeStyle='rgba(86,194,113,.5)';p.strokeRect(x0+.5,y0+.5,Z,Z);     // placed cell
+  p.strokeStyle='rgba(86,194,113,.5)';p.strokeRect(x0+.5,y0+.5,Z,Z); // placed cell
   const rec=state.devTok&&sprites[state.devTok];
   if(rec&&rec.img){
     const v=devVals(),z=Z/CELL;
@@ -893,13 +1530,13 @@ function drawDevPreview(){
     p.save();
     if(rot){p.translate(pvx,pvy);p.rotate(rot*Math.PI/180);p.translate(-pvx,-pvy);}
     p.drawImage(rec.img,dx,dy,rec.w*z,rec.h*z);
-    p.strokeStyle='rgba(255,210,74,.55)';p.strokeRect(dx+.5,dy+.5,rec.w*z,rec.h*z);  // draw-box
+    p.strokeStyle='rgba(255,210,74,.55)';p.strokeRect(dx+.5,dy+.5,rec.w*z,rec.h*z); // draw-box
     p.restore();
     if(v.arrow!=null)(v.arrow==='cw'||v.arrow==='ccw'
       ? spinArrowG(p,x0+Z/2,y0+Z/2,v.arrow==='cw',Z*0.45)
       : orientArrowG(p,x0+Z/2,y0+Z/2,+v.arrow,Z*0.45));
   }
-  p.strokeStyle='#ff5a5a';p.lineWidth=1;                 // cell-origin crosshair (pivot target)
+  p.strokeStyle='#ff5a5a';p.lineWidth=1; // cell-origin crosshair (pivot target)
   p.beginPath();p.moveTo(x0-4,y0);p.lineTo(x0+4,y0);p.moveTo(x0,y0-4);p.lineTo(x0,y0+4);p.stroke();
 }
 function fillRect(sel,token){const s=normSel(sel);const g=ensureLayer(state.layer);
@@ -916,8 +1553,8 @@ function pasteAt(c,r){if(!state.clipboard)return;snapshot();const g=ensureLayer(
 function enterStamp(){
   if(!state.clipboard)return;
   if(state.tool!=='stamp')state.stampPrev=state.tool;
-  state.tool='stamp'; state.sel=null;                 // the selection did its job
-  state.clipboard.cells.forEach(row=>row.forEach(ensureSprite));   // art ready for the ghost (incl. cross-chunk)
+  state.tool='stamp'; state.sel=null; // the selection did its job
+  state.clipboard.cells.forEach(row=>row.forEach(ensureSprite)); // art ready for the ghost (incl. cross-chunk)
   $$('.tool').forEach(b=>b.classList.remove('active'));
   if(cv)cv.style.cursor='crosshair';
   setStatus(`stamp ${state.clipboard.w}×${state.clipboard.h} — click to paste · Esc / right-click to stop`);
@@ -933,7 +1570,7 @@ function drawStampGhost(){
     if(rec&&rec.img)blit(rec,x,y);else{ctx.fillStyle=CAT_COLOR[tileCat(t)]||'#3a3f4b';ctx.fillRect(x+1,y+1,CELL-2,CELL-2);}
     ctx.globalAlpha=1;
   }
-  ctx.strokeStyle='#ffcc33';ctx.lineWidth=1.5/state.view.scale;   // amber = "floating paste"
+  ctx.strokeStyle='#ffcc33';ctx.lineWidth=1.5/state.view.scale; // amber = "floating paste"
   ctx.strokeRect(hc*CELL+.5,hr*CELL+.5,cb.w*CELL-1,cb.h*CELL-1);
 }
 
@@ -964,21 +1601,21 @@ function findPathSegment(c,r,tol){
 }
 function pathDown(c,r,e){
   const hit=findPathVertex(c,r);
-  if(hit){                                   // grab a vertex; Alt = move whole path
+  if(hit){ // grab a vertex; Alt = move whole path
     snapshot();
     state.drag=e&&e.altKey?{pathmove:true,path:hit.path,sx:c,sy:r,base:hit.path.pts.map(pt=>[pt[0],pt[1]])}
                           :{pathv:true,path:hit.path,idx:hit.idx};
     return;
   }
-  if(state.activePath){                       // extending the open path
+  if(state.activePath){ // extending the open path
     const last=state.activePath.pts[state.activePath.pts.length-1];
     const[nc,nr]=(e&&e.shiftKey&&last)?axisLock(c,r,last[0],last[1]):[c,r];
     snapshot();state.activePath.pts.push([nc,nr]);pathHud(state.activePath);draw();return;
   }
-  const seg=findPathSegment(c,r,0.6);         // click near a segment = insert a vertex there
+  const seg=findPathSegment(c,r,0.6); // click near a segment = insert a vertex there
   if(seg){snapshot();seg.path.pts.splice(seg.idx,0,[c,r]);
     state.drag={pathv:true,path:seg.path,idx:seg.idx};pathHud(seg.path);draw();return;}
-  snapshot();                                  // otherwise start a new path
+  snapshot(); // otherwise start a new path
   const p={x:c,y:r,pts:[[c,r]]};(state.chunk.paths=state.chunk.paths||[]).push(p);state.activePath=p;
   setStatus('path: click to add points · click a segment to insert · Shift=straight · Alt-drag=move whole · Enter/double-click to finish');
   draw();
@@ -1013,14 +1650,14 @@ function onWheel(e){e.preventDefault();const v=state.view;const f=e.deltaY<0?1.1
   v.ox=mx-wx*v.scale;v.oy=my-wy*v.scale;clampView();hud();draw();}
 function startEnemyDrag(ex){state.drag={enemy:ex};state.dragEnemy=ex;
   state.dragEnemyFrom={sx:Math.round(ex.sx),sy:Math.round(ex.sy)};snapshot();}
-function deleteAt(c,r){              // right-click delete
+function deleteAt(c,r){ // right-click delete
   removeEnemyAt(c,r);
   // on the enemy layer, delete only the enemy — leave the block underneath intact.
   // on the enemy layer, delete only the enemy — leave the block underneath.
   if(state.layer!=='enemy' && inBounds(c,r)) ensureLayer(state.layer)[r][c]='-';
 }
 function inSel(c,r){if(!state.sel)return false;const s=normSel(state.sel);return c>=s.x0&&c<=s.x1&&r>=s.y0&&r<=s.y1;}
-function liftSelection(c,r){         // cut the selected region into a floating buffer
+function liftSelection(c,r){ // cut the selected region into a floating buffer
   snapshot();const s=normSel(state.sel),g=ensureLayer(state.layer);
   const cells=[];for(let rr=s.y0;rr<=s.y1;rr++){const row=[];for(let cc=s.x0;cc<=s.x1;cc++){row.push((g[rr]&&g[rr][cc])||'-');if(inBounds(cc,rr))g[rr][cc]='-';}cells.push(row);}
   state.floating={w:s.x1-s.x0+1,h:s.y1-s.y0+1,cells,x:s.x0,y:s.y0,offx:c-s.x0,offy:r-s.y0};
@@ -1053,7 +1690,7 @@ function onDown(e){
   // right-click stops stamping. Handled before delete so right-click cancels.
   if(state.tool==='stamp'&&!pan){
     if(e.button===2||!state.clipboard){exitStamp();return;}
-    if(e.button===0){pasteAt(c,r);return;}   // stays in stamp mode → paste again
+    if(e.button===0){pasteAt(c,r);return;} // stays in stamp mode → paste again
   }
   // right-click ALWAYS deletes (enemy + tile), with drag-to-delete
   if(e.button===2){
@@ -1061,23 +1698,28 @@ function onDown(e){
     snapshot();deleteAt(c,r);state.drag={rmdrag:true};draw();return;
   }
   if(pan){state.drag={pan:true,sx:e.offsetX,sy:e.offsetY,ox:state.view.ox,oy:state.view.oy};return;}
-  if(state.tool==='eyedrop'){const g=layerGrid(state.layer);if(g&&inBounds(c,r)&&g[r][c]!=='-'){state.selTile=g[r][c];updateSelInfo();syncPaletteSel();}return;}
+  if(state.tool==='eyedrop'){
+    const en=enemyAt(c,r);                          // enemy first, then the active-layer tile
+    if(en){state.selEnemy=en.properties;ensureSprite(en.properties);setTool('enemy');updateSelInfo();syncPaletteSel();return;}  // picked an enemy -> enemy tool
+    const g=layerGrid(state.layer);
+    if(g&&inBounds(c,r)&&g[r][c]!=='-'){state.selTile=g[r][c];updateSelInfo();syncPaletteSel();setTool('paint');}  // picked a tile -> paint
+    return;}
   if(state.tool==='path'){pathDown(c,r,e);return;}
   if(state.tool==='conn'){connDown(c,r);return;}
   if(state.tool==='select'){
-    const ex=enemyAt(c,r);              // click an enemy = grab & move it (+ open its tuning)
+    const ex=enemyAt(c,r); // click an enemy = grab & move it (+ open its tuning)
     if(ex){selectEnemyCell(ex);startEnemyDrag(ex);return;}
-    if(inSel(c,r)){liftSelection(c,r);return;}   // click inside selection = drag-move it
+    if(inSel(c,r)){liftSelection(c,r);return;} // click inside selection = drag-move it
     selectEnemyCell(null);
     state.sel={x0:c,y0:r,x1:c,y1:r};state.drag={selecting:true};draw();return;
   }
   if(state.tool==='enemy'){
     const ex=enemyAt(c,r);
     if(ex){ selectEnemyCell(ex);
-            if(e.shiftKey){snapshot();ex.properties=state.selEnemy;ensureSprite(state.selEnemy);draw();}  // shift-click = retype
-            else startEnemyDrag(ex); }                                       // click = move + open tuning
+            if(e.shiftKey){snapshot();ex.properties=state.selEnemy;ensureSprite(state.selEnemy);draw();} // shift-click = retype
+            else startEnemyDrag(ex); } // click = move + open tuning
     else{snapshot();const ne={sx:c,sy:r,properties:state.selEnemy};state.chunk.enemies.push(ne);
-          ensureSprite(state.selEnemy);selectEnemyCell(ne);draw();}  // enemy layer only — the spawn marker is added into `active` at build (to_xml), so the block underneath is preserved
+          ensureSprite(state.selEnemy);selectEnemyCell(ne);draw();} // enemy layer only — the spawn marker is added into `active` at build (to_xml), so the block underneath is preserved
     return;
   }
   if(state.tool==='rect'){state.sel={x0:c,y0:r,x1:c,y1:r};state.drag={rect:true};draw();return;}
@@ -1088,7 +1730,7 @@ function onMove(e){
   const rect=cv.getBoundingClientRect();const ox=e.clientX-rect.left,oy=e.clientY-rect.top;
   const [c,r]=s2cell(ox,oy); hud(c,r); state.hover=[c,r];
   const d=state.drag;
-  if(!d){if(state.tool==='paint'||state.tool==='enemy'||state.tool==='stamp')draw();return;}   // brush/stamp ghost follows cursor
+  if(!d){if(state.tool==='paint'||state.tool==='enemy'||state.tool==='stamp')draw();return;} // brush/stamp ghost follows cursor
   if(d.pan){state.view.ox=d.ox+(ox-d.sx);state.view.oy=d.oy+(oy-d.sy);clampView();draw();return;}
   if(d.rmdrag){deleteAt(c,r);draw();return;}
   if(d.paint){applyPaint(c,r);draw();return;}
@@ -1105,7 +1747,7 @@ function onUp(){
   const d=state.drag;state.drag=null;state.dragEnemy=null;if(!d)return;
   if(d.rect){snapshot();fillRect(state.sel,state.selTile);state.sel=null;draw();}
   if(d.moving){stampFloating();draw();}
-  if(d.enemy){                          // an enemy was dragged — follow its tuning to the new cell
+  if(d.enemy){ // an enemy was dragged — follow its tuning to the new cell
     const from=state.dragEnemyFrom,to={sx:Math.round(d.enemy.sx),sy:Math.round(d.enemy.sy)};
     if(from&&(from.sx!==to.sx||from.sy!==to.sy))moveEnemyTuning(from,to);
     if(state.selEnemyCell)selectEnemyCell(d.enemy);
@@ -1117,7 +1759,7 @@ function onUp(){
 function hud(c,r){
   if(c!=null){let lbl=`x ${c}, y ${r}`;
     if(state.chunk){const g=layerGrid(state.layer);const t=(g&&inBounds(c,r))?g[r][c]:'-';
-      if(t&&t!=='-'){lbl+=`  [${t}]`;const id=tileLabel(t);if(id)lbl+=` · ${id}`;}}
+      if(t&&t!=='-'){lbl+=` [${t}]`;const id=tileLabel(t);if(id)lbl+=` · ${id}`;}}
     $('#hudCell').textContent=lbl;}
   $('#hudZoom').textContent=`${Math.round(state.view.scale*100)}%`;
   $('#hudLayer').textContent=state.layer;
@@ -1138,22 +1780,22 @@ function clampView(){
   if(!state.chunk)return;
   const wrap=$('#canvasWrap'),M=8;
   const fit=(o,content,view)=> content<=view-2*M
-    ? Math.min(Math.max(o,M),view-content-M)      // fits: keep fully on-screen
-    : Math.min(Math.max(o,view-content-M),M);     // overflows: clamp to either edge
+    ? Math.min(Math.max(o,M),view-content-M) // fits: keep fully on-screen
+    : Math.min(Math.max(o,view-content-M),M); // overflows: clamp to either edge
   state.view.ox=fit(state.view.ox,state.chunk.w*CELL*state.view.scale,wrap.clientWidth);
   state.view.oy=fit(state.view.oy,state.chunk.h*CELL*state.view.scale,wrap.clientHeight);
 }
 
 // ---------- chunk load / meta ----------
 let allChunkNames=[];
-async function refreshChunkList(){allChunkNames=await api().list_chunks($('#activeOnly').checked);renderChunkOptions();}
-function renderChunkOptions(){const q=$('#chunkSearch').value.toLowerCase();const sel=$('#chunkList');sel.innerHTML='';
+async function refreshChunkList(){const ao=$('#activeOnly');if(!ao)return;allChunkNames=await api().list_chunks(ao.checked);renderChunkOptions();}
+function renderChunkOptions(){const cs=$('#chunkSearch'),sel=$('#chunkList');if(!cs||!sel)return;const q=cs.value.toLowerCase();sel.innerHTML='';
   const shown=allChunkNames.filter(n=>n.toLowerCase().includes(q));
   shown.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;sel.appendChild(o);});
-  $('#chunkCount').textContent=`${shown.length} of ${allChunkNames.length} chunks`;}
+  const cc=$('#chunkCount');if(cc)cc.textContent=`${shown.length} of ${allChunkNames.length} chunks`;}
 async function loadChunkModel(c,lib){
   if(c.error){setStatus(c.error,true);return;}
-  if(state.preview){state.preview=null;$('#previewBar').hidden=true;}   // opening a chunk exits preview
+  if(state.preview){state.preview=null;$('#previewBar').hidden=true;} // opening a chunk exits preview
   state.libEdit=!!lib;
   state.chunk=c;state.undo.length=0;state.redo.length=0;
   // enemies are their own layer now — strip any 'ennemy0' spawn markers baked into
@@ -1172,13 +1814,13 @@ function syncMeta(){const c=state.chunk;$('#metaW').value=c.w;$('#metaH').value=
 function syncPaletteSel(){$$('#tilePalette .swatch').forEach(s=>s.classList.toggle('sel',s.dataset.name===state.selTile));}
 
 // ---------- by-date authoring (ordered level shaping) ----------
-let dayState=null;          // {date, rows, order, slots, force_date}
+let dayState=null; // {date, rows, order, slots, force_date}
 async function refreshCalendar(){
   const cal=await api().get_calendar();
   const sel=$('#dateSel');sel.innerHTML='';
   (cal.days||[]).forEach(d=>{const o=document.createElement('option');o.value=d.date;
-    const lock=cal.force_date===d.date?'🔒 ':'';
-    o.textContent=`${lock}${d.date}  (${d.edited}/${d.editable} edited)`;sel.appendChild(o);});
+    const lock=cal.force_date===d.date?'':'';
+    o.textContent=`${lock}${d.date} (${d.edited}/${d.editable} edited)`;sel.appendChild(o);});
   if(!cal.days||!cal.days.length){$('#dateInfo').textContent='no capture index (run tools/capture_january.py)';return;}
   if(cal.force_date)sel.value=cal.force_date;
   await loadDay(sel.value);
@@ -1187,7 +1829,7 @@ async function refreshLibrary(){
   const r=await api().get_library();const sel=$('#libList');if(!sel)return;
   const keep=sel.value;sel.innerHTML='';
   (r.library||[]).forEach(c=>{const o=document.createElement('option');o.value=c.name;
-    o.textContent=`${c.name}  (${c.w}×${c.h})`;sel.appendChild(o);});
+    o.textContent=`${c.name} (${c.w}×${c.h})`;sel.appendChild(o);});
   if(keep)sel.value=keep;
 }
 async function refreshThemes(){
@@ -1210,12 +1852,12 @@ function applyDay(r){
   // theme: forced overrides native; reflect in the dropdown + info line
   const sel=$('#themeSel');if(sel)sel.value=(r.force_theme==null?'':String(r.force_theme));
   const themeTxt=r.force_theme!=null
-    ? `🎨 <b>${themeLabel(r.force_theme)}</b> (forced)`
-    : (r.native_theme!=null?`🎨 ${themeLabel(r.native_theme)}`:'🎨 theme not captured');
+    ? `<b>${themeLabel(r.force_theme)}</b> (forced)`
+    : (r.native_theme!=null?`${themeLabel(r.native_theme)}`:'theme not captured');
   $('#dateInfo').innerHTML=`${gp.length} sections · <b>${ed} edited</b> · ${del} emptied · ${themeTxt}`
-    +(locked?' · <b style="color:#7fd17f">🔒 builds this day</b>':' · <i>not locked — press 🔒</i>');
+    +(locked?' · <b style="color:#7fd17f">builds this day</b>':' · <i>not locked — press </i>');
   renderDaySeq();
-  if(dayState&&dayState.date)loadDayThumbs(dayState.date);   // filmstrip thumbnails (async)
+  if(dayState&&dayState.date)loadDayThumbs(dayState.date); // filmstrip thumbnails (async)
 }
 // fetch each chunk's grid once and re-render the day panel with thumbnails.
 async function loadDayThumbs(date){
@@ -1268,13 +1910,20 @@ function openChunkPicker(title,onPick,withClear){
 }
 async function loadChunkPickNames(){
   let game=[],lib=[];
-  try{game=await api().list_chunks(false)||[];}catch(e){}   // always all seasons
+  try{game=await api().list_chunks(false)||[];}catch(e){} // always all seasons
   try{const L=await api().get_library();lib=(L.library||[]).map(x=>x.name);}catch(e){}
   // custom chunks first, then game chunks; "(empty corridor)" sentinel optional
   _ckNames=(_ckClear?['']:[]).concat(lib,game);
 }
 function closeChunkPicker(){$('#chunkPickModal').classList.add('hidden');if(_ckIO){_ckIO.disconnect();_ckIO=null;}}
-function chooseChunk(name){const cb=_ckPick;closeChunkPicker();if(cb)cb(name);}
+function chooseChunk(name){
+  // test/debug/bug sections are dev-only scratch chunks — they usually reference
+  // missing/placeholder tiles and hang or crash the game on load.
+  if(name&&/test|bug/i.test(name)){
+    if(!confirm(`"${name}" looks like a test/debug section.\n\n⚠️ Test/debug chunks crash the game about 95% of the time. Use it anyway?`))return;
+  }
+  const cb=_ckPick;closeChunkPicker();if(cb)cb(name);
+}
 function renderChunkPickGrid(){
   const q=$('#chunkPickSearch').value.trim().toLowerCase();
   const matches=q?_ckNames.filter(n=>n.toLowerCase().includes(q)):_ckNames;
@@ -1300,6 +1949,12 @@ function renderChunkPickGrid(){
     const sw=document.createElement('div');sw.className='gswatch';sw.dataset.name=name;sw._name=name;
     const cv=document.createElement('canvas');cv.className='ckthumb';cv.width=168;cv.height=224;sw._cv=cv;sw.appendChild(cv);
     const lbl=document.createElement('div');lbl.textContent=name||'— empty gap —';sw.appendChild(lbl);
+    if(name&&/test|bug/i.test(name)){
+      sw.title='⚠️ Test/debug section — crashes the game ~95% of the time';
+      const warn=document.createElement('div');warn.textContent='⚠️ crashy';
+      warn.style.cssText='color:#e0a030;font-size:10px;font-weight:600';
+      sw.appendChild(warn);
+    }
     sw.onclick=()=>chooseChunk(name);
     frag.appendChild(sw);
   });
@@ -1308,44 +1963,101 @@ function renderChunkPickGrid(){
 }
 async function loadDay(date){if(!date)return;applyDay(await api().get_day_sequence(date));}
 async function pushOrder(){applyDay(await api().set_day_order(dayState.date,dayState.order));}
+const MAX_CHUNKS=56;   // the game won't load a level with more than 56 chunks (sections)
+function daySectionCount(){return dayState&&dayState.rows?dayState.rows.filter(r=>!r.removed).length:0;}
 function renderDaySeq(){
   const box=$('#daySeq');box.innerHTML='';
+  // number the EFFECTIVE checkpoints in play order (start→finish): a structural
+  // checkpoint that isn't removed, or a gameplay slot flagged as a custom one.
+  let cpN=0;
   dayState.rows.forEach(row=>{
-    const el=document.createElement('div');el.className='seqrow '+row.role;
+    const isCP=(row.role==='checkpoint'&&!row.removed)||(row.role==='gameplay'&&row.checkpoint);
+    row._cpNum=isCP?(++cpN):0;
+  });
+  dayState.cpCount=cpN;
+  // checkpoint/endzone/special rows act on the gameplay order through the slot
+  // that FOLLOWS them, so ＋ inserts in the same place a gameplay ＋ would.
+  const nextGp=[];
+  {let g=dayState.order?dayState.order.length:0;
+   for(let i=dayState.rows.length-1;i>=0;i--){
+     if(dayState.rows[i].role==='gameplay')g=dayState.rows[i].gp;
+     nextGp[i]=g;
+   }}
+  const removedCps=[];
+  _seqDisp=[]; // the rows actually drawn, for drag maths
+  dayState.rows.forEach((row,ri)=>{
+    // a removed checkpoint is gone from the level — don't clutter the list with it;
+    // collect it for a compact "restore" footer instead.
+    if(row.removed&&row.struct_ord!=null){removedCps.push(row);return;}
+    // a slot freed by a delete reverts to the game's NATIVE chunk (the generator
+    // slot count is fixed) — don't show that filler as an authored section.
+    if(row.role==='gameplay'&&row.deleted&&row.orig)return;
+    const el=document.createElement('div');
+    const di=_seqDisp.length;
+    _seqDisp.push({role:row.role,gp:row.role==='gameplay'?row.gp:null,
+                   so:row.role!=='gameplay'?row.struct_ord:null,name:row.name});
+    el.dataset.row=di;
+    // START/END stay marked (they're the level's bookends); every other structural
+    // piece is drawn and driven exactly like a normal section.
+    const bookend=(row.role==='start'||row.role==='end');
+    el.className='seqrow '+(row.role==='gameplay'||!bookend?'gameplay':row.role)
+      +(row.role!=='gameplay'?' struct':'')
+      +(row._cpNum&&!row.removed?' cpchunk':'');   // colour checkpoint sections green
     if(row.role!=='gameplay'){
       const nm=`${row.name}${row.edited?' <b>✎</b>':''}${row.removed?' <i>(removed)</i>':''}`;
-      let btns=`<button data-repn="${row.name}" title="swap this piece for another">⇄</button>`
+      let btns='';
+      if(!bookend&&nextGp[ri]!=null)
+        btns+=`<button data-ins="${nextGp[ri]}" title="add a section here (pushes everything above up)">＋</button>`;
+      btns+=`<button data-repn="${row.name}" title="swap this piece for another">⇄</button>`
         +(row.edited?`<button data-restoren="${row.name}" title="restore original">↺</button>`:'');
-      // checkpoints can be removed from the day (the finish/specials cannot).
-      if(row.role==='checkpoint'&&row.struct_ord!=null){
-        btns+=row.removed
-          ?`<button data-cprestore="${row.struct_ord}" title="put this checkpoint back">↺ restore</button>`
-          :`<button data-cpremove="${row.struct_ord}" title="remove this checkpoint from the day">✕ remove</button>`;
-      }
+      // any structural piece except the bookends can be dropped from the day.
+      if(!bookend&&row.struct_ord!=null)
+        btns+=`<button data-cpremove="${row.struct_ord}" title="remove this section from the day">✕</button>`;
       if(row.removed)el.classList.add('removed');
-      el.innerHTML=`<span class="seqrole">${row.role}</span>`
-        +`<span class="seqname" data-editn="${row.name}" title="double-click to edit this section">${nm}</span>`
+      // structural pieces (not the bookends) drag like any other section — the
+      // drop sets their anchor, i.e. how many gameplay chunks sit below them.
+      const movable=!bookend&&row.struct_ord!=null;
+      if(movable)el.draggable=true;
+      el.innerHTML=(bookend?`<span class="seqrole">${row.role}</span>`
+                           :`<span class="seqdrag${movable?'':' fixed'}" title="${movable?'drag to reorder':'fixed position'}">⠿</span>`)
+        +`<span class="seqname" data-editn="${row.name}" data-role="${row.role}" title="double-click to edit this section">${nm}</span>`
         +`<span class="seqbtns">${btns}</span>`;
     }else{
       const gp=row.gp;
-      el.draggable=true;el.dataset.gp=gp;                 // drag to reorder
+      el.draggable=true;el.dataset.gp=gp; // drag to reorder
       if(row.extra)el.classList.add('extra');
-      const nm=row.deleted?'<i>— empty gap —</i>':`${row.name}${row.edited?' <b>✎</b>':''}${row.extra?' <span class="xtag">+extra</span>':''}`;
+      // an unclaimed slot renders the day's OWN chunk in-game — say so, rather
+      // than calling it an empty gap (only a truly nameless slot is a gap).
+      const nm=row.deleted
+        ?(row.orig?`<i>${row.orig}</i> <span class="xtag">native</span>`:'<i>— empty gap —</i>')
+        :`${row.name}${row.edited?' <b>✎</b>':''}${row.extra?' <span class="xtag">+extra</span>':''}`;
       el.innerHTML=`<span class="seqdrag" title="drag to reorder">⠿</span>`
-        +`<span class="seqmove power-only"><button data-mv="up" data-gp="${gp}">▲</button>`
-        +`<button data-mv="dn" data-gp="${gp}">▼</button></span>`
         +`<span class="seqname" data-edit="${gp}" title="double-click to edit this section">${nm}</span>`
         +`<span class="seqbtns"><button data-ins="${gp}" title="add a section here (pushes everything above — checkpoints included — up)">＋</button>`
         +`<button data-rep="${gp}" title="swap for another section">⇄</button>`
-        +`<button data-cpflag="${gp}" class="${row.checkpoint?'on':''}" title="${row.checkpoint?'unset custom checkpoint':'make this a custom checkpoint (respawn point here)'}">${row.checkpoint?'⚑':'⚐'}</button>`
+        +`<button data-cpflag="${gp}" class="power-only ${row.checkpoint?'on':''}" title="${row.checkpoint?'unset checkpoint '+row._cpNum:'make this an extra checkpoint (respawn point here)'}">${row.checkpoint?'⚑ '+row._cpNum:'⚐'}</button>`
         +`<button data-del="${gp}" title="delete this section — everything above slides down (checkpoints included). For a climbable gap instead, use ⇄ → empty.">✕</button></span>`;
       if(row.checkpoint)el.classList.add('iscp');
     }
-    const th=dayState.thumbs&&dayState.thumbs[row.name];   // filmstrip thumbnail
+    const th=dayState.thumbs&&dayState.thumbs[row.name]; // filmstrip thumbnail
     if(th&&th.w){const tc=document.createElement('canvas');tc.className='seqthumb';tc.width=32;tc.height=40;
       renderThumb(tc,th);el.insertBefore(tc,el.querySelector('.seqname'));}
     box.appendChild(el);
   });
+  // count line + restore footer for removed checkpoints (they're out of the level).
+  const info=document.createElement('div');info.className='seqcount';
+  const nsec=daySectionCount();                      // the game caps a level at 31 chunks
+  const over=nsec>MAX_CHUNKS;
+  info.innerHTML=`<b>${cpN}</b> checkpoint${cpN===1?'':'s'} · `
+    +`<b style="color:${over?'var(--danger)':'var(--accent)'}">${nsec}</b>/${MAX_CHUNKS} sections`
+    +(removedCps.length?` · <b>${removedCps.length}</b> removed`:'')
+    +(over?` <span style="color:var(--danger)">— over the game's limit, remove ${nsec-MAX_CHUNKS}</span>`:'');
+  box.appendChild(info);
+  if(removedCps.length){
+    const rf=document.createElement('div');rf.className='seqrestore';
+    rf.innerHTML='removed: '+removedCps.map(r=>`<button data-cprestore="${r.struct_ord}" title="put this section back into the level">↺ ${r.name}</button>`).join(' ');
+    box.appendChild(rf);
+  }
   // append-to-end control (EXPERIMENTAL longer levels, POWER MODE only): adds a
   // section past the level's native length. Extras may not render — playtest.
   const add=document.createElement('div');add.className='seqrow addrow power-only';add.hidden=!state.power;
@@ -1357,36 +2069,74 @@ function renderDaySeq(){
   box.querySelectorAll('[data-rep]').forEach(b=>b.onclick=()=>repGp(+b.dataset.rep));
   box.querySelectorAll('[data-ins]').forEach(b=>b.onclick=()=>insertGp(+b.dataset.ins));
   box.querySelectorAll('[data-edit]').forEach(b=>b.ondblclick=()=>editGp(+b.dataset.edit));
-  box.querySelectorAll('[data-editn]').forEach(b=>b.ondblclick=()=>editName(b.dataset.editn));
+  box.querySelectorAll('[data-editn]').forEach(b=>b.ondblclick=()=>{
+    const role=b.dataset.role;   // start / end / checkpoint are load-bearing — guard editing them
+    if(role==='start'||role==='end'||role==='checkpoint'){
+      if(!state.power){alert('The start, checkpoint and end sections can\'t be edited in Safe mode — they\'re load-bearing and editing them will likely crash your game. Turn on Power mode (and back up your mod first) if you really need to.');return;}
+      if(!confirm('Editing the '+role+' section unlocks experimental and untested changes that will probabably crash your game. Please backup your mod, since it is likely going to be bricked. Continue anyway?'))return;
+    }
+    editName(b.dataset.editn);});
   box.querySelectorAll('[data-repn]').forEach(b=>b.onclick=()=>replaceName(b.dataset.repn));
   box.querySelectorAll('[data-restoren]').forEach(b=>b.onclick=()=>replaceName(b.dataset.restoren,''));
   // checkpoint remove / restore / custom-flag
-  box.querySelectorAll('[data-cpremove]').forEach(b=>b.onclick=async()=>{applyDay(await api().remove_day_checkpoint(dayState.date,+b.dataset.cpremove));setStatus('checkpoint removed from this day');});
-  box.querySelectorAll('[data-cprestore]').forEach(b=>b.onclick=async()=>{applyDay(await api().restore_day_checkpoint(dayState.date,+b.dataset.cprestore));setStatus('checkpoint restored');});
+  box.querySelectorAll('[data-cpremove]').forEach(b=>b.onclick=async()=>{applyDay(await api().remove_day_checkpoint(dayState.date,+b.dataset.cpremove));setStatus('section removed from this day');});
+  box.querySelectorAll('[data-cprestore]').forEach(b=>b.onclick=async()=>{applyDay(await api().restore_day_checkpoint(dayState.date,+b.dataset.cprestore));setStatus('section restored');});
   box.querySelectorAll('[data-cpflag]').forEach(b=>b.onclick=async()=>{const gp=+b.dataset.cpflag;const cur=(dayState.rows.find(r=>r.gp===gp)||{}).checkpoint;applyDay(await api().toggle_custom_checkpoint(dayState.date,gp,!cur));setStatus(cur?'custom checkpoint removed':'custom checkpoint set here');});
   wireDayDrag(box);
-  applyPower();                                            // honour power state for new rows
+  applyPower(); // honour power state for new rows
 }
-// ---- drag-to-reorder the day's gameplay sections (Mario-Maker style) --------
-let _dragGp=null,_dropAt=null;
+// ---- drag-to-reorder the day's sections (Mario-Maker style) ----------------
+// Every drawn row is in `_seqDisp` (display order, bottom->top). A gameplay row
+// drags by reordering `dayState.order`; a structural row (checkpoint/endzone/
+// special) drags by re-anchoring it — its anchor IS the number of gameplay
+// chunks below it, which is exactly what the drop position tells us.
+let _seqDisp=[],_dragRow=null,_dropAt=null;
 function clearDropMarks(box){box.querySelectorAll('.dropbefore,.dropafter')
   .forEach(el=>el.classList.remove('dropbefore','dropafter'));}
+// how many gameplay rows sit below display index k (optionally ignoring one row)
+function gpBelow(k,skip){let n=0;
+  for(let i=0;i<k&&i<_seqDisp.length;i++){if(i===skip)continue;if(_seqDisp[i].gp!=null)n++;}
+  return n;}
 function wireDayDrag(box){
-  box.querySelectorAll('.seqrow.gameplay').forEach(el=>{
-    el.ondragstart=e=>{_dragGp=+el.dataset.gp;_dropAt=null;el.classList.add('dragging');
-      e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',el.dataset.gp);}catch(_){}};
-    el.ondragend=()=>{_dragGp=null;_dropAt=null;clearDropMarks(box);
-      box.querySelectorAll('.dragging').forEach(x=>x.classList.remove('dragging'));};
-    el.ondragover=e=>{if(_dragGp==null)return;e.preventDefault();
+  // auto-scroll the list while dragging near its top/bottom edge
+  const EDGE=40; let scrollDir=0, rafId=0;
+  const stopScroll=()=>{scrollDir=0;if(rafId){cancelAnimationFrame(rafId);rafId=0;}};
+  const stepScroll=()=>{ if(!scrollDir){rafId=0;return;}
+    box.scrollTop+=scrollDir*Math.max(6,EDGE*0.25); rafId=requestAnimationFrame(stepScroll); };
+  box.ondragover=e=>{ if(_dragRow==null)return; e.preventDefault();
+    const r=box.getBoundingClientRect();
+    scrollDir = (e.clientY<r.top+EDGE) ? -1 : (e.clientY>r.bottom-EDGE ? 1 : 0);
+    if(scrollDir && !rafId) rafId=requestAnimationFrame(stepScroll); };
+  box.ondragleave=e=>{ const r=box.getBoundingClientRect();   // left the list entirely -> stop
+    if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) stopScroll(); };
+  box.querySelectorAll('.seqrow[data-row]').forEach(el=>{
+    const di=+el.dataset.row;
+    if(el.draggable){
+      el.ondragstart=e=>{_dragRow=di;_dropAt=null;el.classList.add('dragging');
+        e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(di));}catch(_){}};
+      el.ondragend=()=>{_dragRow=null;_dropAt=null;clearDropMarks(box);stopScroll();
+        box.querySelectorAll('.dragging').forEach(x=>x.classList.remove('dragging'));};
+    }
+    // every row is a drop TARGET, so a section can be moved past a checkpoint
+    el.ondragover=e=>{if(_dragRow==null)return;e.preventDefault();
       const r=el.getBoundingClientRect(),before=(e.clientY-r.top)<r.height/2;
       clearDropMarks(box);el.classList.add(before?'dropbefore':'dropafter');
-      _dropAt={gp:+el.dataset.gp,before};};
-    el.ondrop=e=>{if(_dragGp==null||!_dropAt)return;e.preventDefault();
-      const from=_dragGp;let to=_dropAt.gp+(_dropAt.before?0:1);
-      _dragGp=null;_dropAt=null;clearDropMarks(box);
-      if(to===from||to===from+1)return;                   // dropped in place
-      const o=dayState.order,[x]=o.splice(from,1);
-      if(from<to)to--;
+      _dropAt=di+(before?0:1);};
+    el.ondrop=e=>{if(_dragRow==null||_dropAt==null)return;e.preventDefault();stopScroll();
+      const from=_dragRow,k=_dropAt,src=_seqDisp[from];
+      _dragRow=null;_dropAt=null;clearDropMarks(box);
+      if(!src)return;
+      if(src.so!=null){ // structural: re-anchor
+        const anchor=gpBelow(k,from);
+        api().move_day_struct(dayState.date,src.so,anchor).then(d=>{
+          if(d&&d.error){setStatus(d.error,true);return;}
+          applyDay(d);setStatus('moved '+src.name);});
+        return;
+      }
+      let to=gpBelow(k,from); // gameplay: reorder the list
+      const o=dayState.order,fi=src.gp;
+      if(to===fi)return; // dropped in place
+      const [x]=o.splice(fi,1);
       o.splice(to,0,x);
       pushOrder();};
   });
@@ -1410,7 +2160,7 @@ async function delGp(gp){applyDay(await api().delete_day_chunk(dayState.date,gp)
 // gameplay slot breaks the level. Warn before allowing it.
 function structuralKind(name){
   const b=String(name||'').toLowerCase();
-  if(b==='finish'||b==='finish2'||(b.startsWith('finish')&&!b.includes('endzone'))||/^end\d*_/.test(b.split('/').pop())||b.includes('endchunks/'))return 'the END piece — it will be tagged as the finish, so the level ENDS at this section (later sections become unreachable)';
+  if(b==='finish'||b==='finish2'||(b.startsWith('finish')&&!b.includes('endzone'))||/^end\d*_/.test(b.split('/').pop())||b.includes('endchunks/'))return 'the END piece — it will be tagged as the finish, so the level ENDS at this section';
   if(b.includes('endzone'))return 'an ENDZONE piece (decorative ending ramp — position-sensitive, has no override tag, so it may not render right)';
   if(b.includes('checkpoint'))return 'a CHECKPOINT piece — it will be tagged so this section becomes a checkpoint';
   if(b.includes('tom_tv')||b.includes('reward_powerup')||b.includes('enable_notifications')||b.includes('king_poster')||b.includes('bonus_room'))return 'a SPECIAL piece';
@@ -1428,12 +2178,13 @@ function repGp(gp){
   // overwrite (replace_chunk), which can leave the slot blank.
   openChunkPicker('Swap this section for…',async name=>{
     if(name&&!okStructural(name))return;
-    dayState.order.splice(gp,1,name);   // remove old at gp + insert new there
+    dayState.order.splice(gp,1,name); // remove old at gp + insert new there
     await pushOrder();
     setStatus(name?('swapped in '+name):('cleared this section'));
-  },true);   // offer the "empty gap" option
+  },true); // offer the "empty gap" option
 }
 function insertGp(gp){
+  if(daySectionCount()>=MAX_CHUNKS){setStatus(`this level is at the game's ${MAX_CHUNKS}-section limit — remove one first`,true);return;}
   openChunkPicker('Add a section here…',async name=>{
     if(!name||!okStructural(name))return;
     applyDay(await api().insert_day_chunk(dayState.date,gp,name));
@@ -1442,6 +2193,7 @@ function insertGp(gp){
 }
 function appendGp(){
   if(!dayState){setStatus('pick a date first',true);return;}
+  if(daySectionCount()>=MAX_CHUNKS){setStatus(`this level is at the game's ${MAX_CHUNKS}-section limit — remove one first`,true);return;}
   openChunkPicker('Add a section to the END (experimental longer level)',async name=>{
     if(!name||!okStructural(name))return;
     dayState.order.push(name);
@@ -1455,7 +2207,7 @@ async function editGp(gp){const n=dayState.order[gp];if(!n){setStatus('empty gap
 // ---------- actions ----------
 const ACTIONS={
   async lockDate(){const d=$('#dateSel').value;if(!d)return;
-    await api().lock_date(d);setStatus('🔒 build locked to '+d+' — VIP unlocked');await refreshCalendar();},
+    await api().lock_date(d);setStatus('build locked to '+d+' — VIP unlocked');await refreshCalendar();},
   async pickFirebar(){
     const kind=state.trapKind;if(!kind)return;
     const p=ELEM_PANELS[kind]||{};let settings={};
@@ -1496,17 +2248,19 @@ const ACTIONS={
     setStatus('assembling the whole level…');
     const r=await api().preview_day(d);
     if(r.error){setStatus(r.error,true);return;}
-    await loadChunkModel(r); state.preview=d;     // set AFTER (loadChunkModel clears it)
+    await loadChunkModel(r); state.preview=d; // set AFTER (loadChunkModel clears it)
     $('#previewInfo').textContent=d+(r.chunk_count?' · '+r.chunk_count+' chunks':'');
-    $('#previewBar').hidden=false; $('#curChunk').textContent='👁 whole level — '+d;
-    setStatus('👁 whole level for '+d+' (read-only)');},
+    $('#previewBar').hidden=false; $('#curChunk').textContent='whole level — '+d;
+    setStatus('whole level for '+d+' (read-only)');},
   exitPreview(){state.preview=null;$('#previewBar').hidden=true;state.chunk=null;
     $('#curChunk').textContent='— pick a chunk —';draw();setStatus('exited preview');},
   async newProj(){const n=prompt('Project name','My Leap Day Mod');if(n===null)return;applyState(await api().new_project(n));setStatus('new project');},
   async openProj(){const st=await api().load_project();if(st.error)return;applyState(st);setStatus('loaded '+st.project_name);},
   async saveProj(){const r=await api().save_project();setStatus(r.saved?('saved '+r.saved):r.error,!!r.error);},
   async loadXapk(){setStatus('extracting game…');const st=await api().pick_xapk();if(st.error){setStatus(st.error,true);return;}
-    applyState(st);await refreshChunkList();await refreshCalendar();setStatus('game loaded — loading sprites…');refreshPaletteArt().then(()=>setStatus('game loaded — pick a date or chunk'));},
+    Object.keys(sprites).forEach(k=>delete sprites[k]); // game changed → drop cached (incl. null) sprites so all re-resolve
+    state.charPortraits=null; // rebuild character portraits for the new game
+    applyState(st);await refreshChunkList();await refreshCalendar();setStatus('game loaded — loading sprites…');refreshPaletteArt().then(()=>{renderPaletteBar();setStatus('game loaded — pick a date or chunk');});},
   resize(){if(!state.chunk)return;snapshot();let w=+$('#metaW').value;const h=+$('#metaH').value;
     if($('#enforceWidth').checked){const legal=[14,28,42],sw=legal.reduce((a,b)=>Math.abs(b-w)<Math.abs(a-w)?b:a);
       if(sw!==w){setStatus('width snapped to '+sw+' (legal widths: 14/28/42)');w=sw;$('#metaW').value=sw;}}
@@ -1516,18 +2270,18 @@ const ACTIONS={
   fit(){fitView();},
   async saveLevel(){const c=state.chunk;if(!c){setStatus('nothing to save',true);return;}
     c.difficulty=parseFloat($('#metaDiff').value);c.bg_color=parseInt($('#metaBg').value);
-    const tun=chunkTunings(c.name);          // per-enemy tuning travels with the chunk
+    const tun=chunkTunings(c.name); // per-enemy tuning travels with the chunk
     if(state.libEdit){await api().save_library_chunk(c.name,c,tun);await refreshLibrary();
       setStatus('saved custom chunk '+c.name);return;}
     const r=await api().save_level(c.name,c,tun);updateEdited(r.edited_levels);
-    if(r.enemy_tuning)syncChunkTunings(c.name,r.enemy_tuning);   // adopt the reconciled set (orphans pruned)
+    if(r.enemy_tuning)syncChunkTunings(c.name,r.enemy_tuning); // adopt the reconciled set (orphans pruned)
     if(r.to_library){await refreshLibrary();
       setStatus('"'+c.name+'" is a new chunk → saved to Custom chunks. Insert it into a day (＋) to place it — a new name can\'t overwrite a game chunk.');
       return;}
-    if($('#dateSel').value)loadDay($('#dateSel').value);   // refresh day edit-progress
+    if($('#dateSel').value)loadDay($('#dateSel').value); // refresh day edit-progress
     setStatus('saved '+c.name+' into mod');},
-  async editChunk(){const n=$('#chunkList').value;if(!n){setStatus('select a chunk',true);return;}loadChunkModel(await api().load_chunk(n));},
-  async blankChunk(){const n=prompt('New level overwrites which existing chunk name?\n(must be a real chunk so the game loads it)',$('#chunkList').value||'');if(!n)return;loadChunkModel(await api().blank_chunk(n));},
+  async editChunk(){const cl=$('#chunkList');const n=cl&&cl.value;if(!n){setStatus('select a chunk',true);return;}loadChunkModel(await api().load_chunk(n));},
+  async blankChunk(){const cl=$('#chunkList');const n=prompt('New level overwrites which existing chunk name?\n(must be a real chunk so the game loads it)',(cl&&cl.value)||'');if(!n)return;loadChunkModel(await api().blank_chunk(n));},
   async removeLevel(){const n=$('#editedList').value;if(!n)return;updateEdited((await api().remove_level(n)).edited_levels);},
   // ---- custom-chunk library ----
   async newLibChunk(){const n=prompt('Name for the new custom chunk:','my_chunk');if(!n)return;
@@ -1554,25 +2308,28 @@ const ACTIONS={
     else setStatus('▶ playing '+(r.force_date||'your level')+' — climb to reach your injected chunks');},
   undo(){undo();}, redo(){redo();},
   openGallery(){showGallery();}, closeGallery(){hideGallery();},
+  openPalette(){openPalette();}, closePalette(){closePalette();},
   closeArt(){closeArtPicker();}, closeChunkPick(){closeChunkPicker();},
   closeLog(){$('#logModal').classList.add('hidden');},
+  openSettings(){$('#settingsModal').classList.remove('hidden');},
+  closeSettings(){$('#settingsModal').classList.add('hidden');},
   // ---- dev mode: bake / clear a sprite anchor+arrow fix ----
   async devSave(){const tok=state.devTok;if(!tok){setStatus('select a tile first',true);return;}
     const r=await api().set_sprite_override(tok,devVals());
     if(r&&!r.error){state.devOverrides=r.overrides||state.devOverrides;
-      loadRecInto(tok,r.rec,()=>{draw();drawDevPreview();});
-      setStatus('🛠 saved sprite fix for '+tok+' — baked into the editor');}
+      loadRecInto(tok,r.rec,()=>{draw();drawDevPreview();syncSpriteViews();});
+      setStatus('saved sprite fix for '+tok+' — baked into the editor');}
     else setStatus((r&&r.error)||'could not save (load your .xapk first)',true);},
   async devReset(){const tok=state.devTok;if(!tok)return;
     const r=await api().clear_sprite_override(tok);
     if(r&&!r.error){state.devOverrides=r.overrides||state.devOverrides;
-      loadRecInto(tok,r.rec,()=>{syncDev();draw();});
+      loadRecInto(tok,r.rec,()=>{syncDev();draw();syncSpriteViews();});
       setStatus('reset '+tok+' to automatic placement');}
     else setStatus((r&&r.error)||'could not reset',true);},
   async devShootSave(){const bakes=collectShootBakes();
     const r=await api().save_shoot_bakes(bakes);
     if(r&&!r.error){state.shootBakes=r||{};renderShootBakes();
-      setStatus('⚙ shoot-speed bakes saved ('+Object.keys(state.shootBakes).length+' combos) — rebuild to apply');}
+      setStatus('shoot-speed bakes saved ('+Object.keys(state.shootBakes).length+' combos) — rebuild to apply');}
     else setStatus((r&&r.error)||'could not save bakes',true);},
 };
 async function doBuild(install){setStatus(install?'building + installing…':'building…');
@@ -1580,6 +2337,37 @@ async function doBuild(install){setStatus(install?'building + installing…':'bu
   $('#logOut').textContent=(r.log||[]).join('\n')+(r.error?('\n\nERROR: '+r.error):'\n\n✔ '+JSON.stringify({levels:r.levels_applied,signed:r.signed,installed:r.installed_on||false},null,1));
   $('#logModal').classList.remove('hidden');setStatus(r.error?('build failed: '+r.error):'build complete',!!r.error);}
 function updateEdited(list){const sel=$('#editedList');sel.innerHTML='';(list||[]).forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;sel.appendChild(o);});}
+// Character portraits (id -> {name,uri,w,h}), fetched once per loaded game so the
+// pickers show each character's face instead of a plain dropdown.
+async function ensureCharPortraits(){
+  if(state.charPortraits)return state.charPortraits;
+  try{const r=await api().get_character_portraits();state.charPortraits=(r&&r.portraits)||{};}
+  catch(e){state.charPortraits={};}
+  return state.charPortraits;
+}
+// Render a clickable portrait grid that drives a (hidden) <select>: clicking a
+// face sets the select's value and fires its existing change handler, so all the
+// backend wiring (set_force_character) is reused untouched.
+function renderCharGrid(gridId,selId,curId,names,cur){
+  const grid=$('#'+gridId); if(!grid)return;
+  const P=state.charPortraits||{};
+  const curEl=$('#'+curId);
+  if(curEl)curEl.textContent=(cur==null||cur==='')?'— off —':(cur+': '+(names[+cur]||''));
+  grid.innerHTML='';
+  const pick=v=>{const s=$('#'+selId);if(!s)return;s.value=v;s.dispatchEvent(new Event('change'));};
+  const cell=(sel,cls,inner,onclick,title)=>{
+    const c=document.createElement('div');c.className='charcell'+(cls||'')+(sel?' sel':'');
+    if(title)c.title=title;c.innerHTML=inner;c.onclick=onclick;grid.appendChild(c);};
+  cell(cur==null||cur==='','\x20off','<div class="charimg noimg">∅</div><div class="charname">Off</div>',
+       ()=>pick(''),'No override');
+  names.forEach((n,i)=>{
+    const p=P[i];
+    cell(String(cur)===String(i),'',
+      (p?`<img class="charimg" src="${p.uri}" alt="${n}" loading="lazy">`
+         :`<div class="charimg noimg">?</div>`)+`<div class="charname">${n}</div>`,
+      ()=>pick(String(i)), i+': '+n);
+  });
+}
 // character picker: build once, reflect the current force_character
 function buildForceChar(names,cur){
   const sel=$('#forceChar'); if(!sel)return;
@@ -1587,30 +2375,18 @@ function buildForceChar(names,cur){
     sel.innerHTML='<option value="">— off (use selection) —</option>'
       +names.map((n,i)=>`<option value="${i}">${i}: ${n}</option>`).join('');
     sel.onchange=async e=>{const st=await api().set_force_character(e.target.value);
+      renderCharGrid('forceCharGrid','forceChar','forceCharCur',names,e.target.value===''?null:+e.target.value);
       setStatus(e.target.value===''?'character force OFF':'forced: '+st.character_names[+e.target.value]+' — build + playtest');};
     sel.dataset.built='1';
   }
   sel.value=(cur==null?'':String(cur));
-}
-// "grapple as" picker: clone a character's look onto Lick (who keeps the grapple)
-function buildGrappleSkin(names,cur){
-  const sel=$('#grappleSkin'); if(!sel)return;
-  if(!sel.dataset.built){
-    sel.innerHTML='<option value="">— off —</option>'
-      +names.map((n,i)=>`<option value="${i}">${i}: ${n}</option>`).join('');
-    sel.onchange=async e=>{const st=await api().set_grapple_skin(e.target.value);
-      if(st.character_names)buildForceChar(st.character_names,st.force_character);
-      setStatus(e.target.value===''?'grappling hook off':'🪝 grapple as '+st.character_names[+e.target.value]+' (looks like them, plays as Lick) — build + playtest');};
-    sel.dataset.built='1';
-  }
-  sel.value=(cur==null?'':String(cur));
+  ensureCharPortraits().then(()=>renderCharGrid('forceCharGrid','forceChar','forceCharCur',names,cur));
 }
 function applyState(st){$('#projName').value=st.project_name||'';updateEdited(st.edited_levels);refreshLibrary();
   if(st.enforce_width!==undefined)$('#enforceWidth').checked=!!st.enforce_width;
   if(st.spawn_mult!==undefined)$('#spawnMult').value=(Number(st.spawn_mult)>1?st.spawn_mult:'');
   if(st.grappling_hook!==undefined)$('#grapplingHook').checked=!!st.grappling_hook;
   if(st.clone_package!==undefined)$('#clonePkg').checked=!!st.clone_package;
-  if(st.strip_store!==undefined)$('#stripStore').checked=!!st.strip_store;
   if(st.keep_music_bg!==undefined)$('#keepMusicBg').checked=!!st.keep_music_bg;
   if(st.bg_mode!==undefined)$('#bgMode').value=st.bg_mode;
   if(st.keep_music_bg!==undefined)$('#bgMode').disabled=!st.keep_music_bg;
@@ -1630,8 +2406,9 @@ function applyState(st){$('#projName').value=st.project_name||'';updateEdited(st
   if(st.shoot_bakes)state.shootBakes=st.shoot_bakes;
   if(st.shoot_classes)state.shootClasses=st.shoot_classes;
   if(st.shoot_enemies)state.shootEnemies=st.shoot_enemies;
-  if(st.character_names){buildForceChar(st.character_names,st.force_character);buildGrappleSkin(st.character_names,st.grapple_skin);}
-  if(st.firebar_dot&&(!fbDot||fbDot._src!==st.firebar_dot)){fbDot=new Image();fbDot._src=st.firebar_dot;fbDot.onload=draw;fbDot.src=st.firebar_dot;}
+  if(st.character_names)buildForceChar(st.character_names,st.force_character);
+  if(st.firebar_dot&&(!fbDot||fbDot._src!==st.firebar_dot)){fbDot=new Image();fbDot._src=st.firebar_dot;
+    fbDot.onload=()=>{draw();document.querySelectorAll('canvas.fbthumb').forEach(drawFirebarThumb);};fbDot.src=st.firebar_dot;}
   state.power=!!st.power_mode;$('#powerMode').checked=state.power;applyPower();
   // opening/creating a project changes the edited chunks, so the day filmstrip
   // thumbnails are stale — reload the current day so the previews match the mod.
@@ -1640,14 +2417,15 @@ function applyState(st){$('#projName').value=st.project_name||'';updateEdited(st
 // tools (sprite-fix, experimental longer levels, raw placement) that can crash.
 function applyPower(){
   $$('.power-only').forEach(el=>{el.hidden=!state.power;});
-  if(!state.power&&state.dev){$('#devMode').checked=false;setDevMode(false);}   // close dev panel when leaving
+  if(!state.power&&state.dev){$('#devMode').checked=false;setDevMode(false);} // close dev panel when leaving
   if(!state.power&&state.devShoot){$('#devShoot').checked=false;setDevShoot(false);}
   document.body.classList.toggle('power',state.power);
+  if(state.catalog&&state.catalog.tiles){buildPalettes();refreshPaletteArt();} // re-filter dev-hidden tiles
 }
 
 // ---------- wiring ----------
 function setTool(t){
-  if(state.tool==='path'&&t!=='path')finishPath();   // switching away ends the open path
+  if(state.tool==='path'&&t!=='path')finishPath(); // switching away ends the open path
   state.connStart=null;
   state.tool=t;$$('.tool').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));
   // keep the Layers panel in step: enemy tool -> enemy layer; a tile tool off the
@@ -1658,9 +2436,13 @@ function setTool(t){
 function wire(){
   $$('[data-act]').forEach(b=>b.onclick=()=>ACTIONS[b.dataset.act]&&ACTIONS[b.dataset.act]());
   $$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
-  $('#tileSearch').oninput=()=>filterPalette('#tileSearch','#tilePalette');
-  $('#enemySearch').oninput=()=>filterPalette('#enemySearch','#enemyPalette');
-  $('#activeOnly').onchange=refreshChunkList;
+  // Settings modal: click the dim backdrop (not the box) or press Esc to close.
+  const sm=$('#settingsModal');
+  if(sm){sm.addEventListener('mousedown',e=>{if(e.target===sm)ACTIONS.closeSettings();});
+    window.addEventListener('keydown',e=>{if(e.key==='Escape'&&!sm.classList.contains('hidden'))ACTIONS.closeSettings();});}
+  $('#tileSearch')?.addEventListener('input',()=>filterPalette('#tileSearch','#tilePalette'));
+  $('#enemySearch')?.addEventListener('input',()=>filterPalette('#enemySearch','#enemyPalette'));
+  $('#activeOnly')?.addEventListener('change',refreshChunkList);
   $('#enforceWidth').onchange=async e=>{await api().set_setting('enforce_width',e.target.checked);
     setStatus(e.target.checked?'width lock ON — chunks snap to 14/28/42':'width lock OFF');};
   $('#spawnMult').onchange=async e=>{let v=parseFloat(e.target.value);
@@ -1671,46 +2453,99 @@ function wire(){
   $('#projName').onchange=async e=>{const st=await api().set_project_name(e.target.value);
     if(st&&st.project_name)e.target.value=st.project_name;};
   $('#grapplingHook').onchange=async e=>{await api().set_grappling_hook(e.target.checked);
-    setStatus(e.target.checked?'🪝 grappling hook from spawn ON (any character, permanent) — build to test':'grappling hook OFF');};
+    setStatus(e.target.checked?'grappling hook from spawn ON (any character, permanent) — build to test':'grappling hook OFF');};
   $('#keepMusicBg').onchange=async e=>{await api().set_keep_music_bg(e.target.checked);
     $('#bgMode').disabled=!e.target.checked;
-    setStatus(e.target.checked?'🎵 offscreen music+background ON — Playtest to hear it (wide 28/42 sections)':'offscreen music+background OFF');};
+    setStatus(e.target.checked?'offscreen music+background ON — Playtest to hear it (wide 28/42 sections)':'offscreen music+background OFF');};
   $('#bgMode').onchange=async e=>{await api().set_bg_mode(e.target.value);
     setStatus(e.target.value==='bare'?'background: bare sky everywhere (scenery stripped)':'background: full animated scenery on every screen');};
   $('#smoothCamera').onchange=async e=>{await api().set_smooth_camera(e.target.checked);
-    setStatus(e.target.checked?'🎥 smooth camera ON — wide sections follow the player (Playtest to see it)':'smooth camera OFF — stock screen-snap');};
+    setStatus(e.target.checked?'smooth camera ON — wide sections follow the player (Playtest to see it)':'smooth camera OFF — stock screen-snap');};
   $('#lockCameraY').onchange=async e=>{await api().set_lock_camera_y(e.target.checked);
-    setStatus(e.target.checked?'🔒 camera Y locked to every section (Playtest to see it)':'camera Y lock OFF');};
+    setStatus(e.target.checked?'camera Y locked to every section (Playtest to see it)':'camera Y lock OFF');};
   $('#lockYCapTop').onchange=async e=>{await api().set_lock_y_cap_top(e.target.checked);
-    setStatus(e.target.checked?'📦 lock camera Y boxes in the top too':'lock camera Y caps bottom only — top open to see the next section');};
+    setStatus(e.target.checked?'lock camera Y boxes in the top too':'lock camera Y caps bottom only — top open to see the next section');};
   $('#brickDeadSides').onchange=async e=>{await api().set_brick_dead_sides(e.target.checked);
-    setStatus(e.target.checked?'🧱 dead side areas of wide sections will be bricked in the build':'brick dead sides OFF');};
+    setStatus(e.target.checked?'dead side areas of wide sections will be bricked in the build':'brick dead sides OFF');};
   $('#hideTimer').onchange=async e=>{await api().set_hide_timer(e.target.checked);
-    setStatus(e.target.checked?'⏱ timer hidden at Playtest':'timer shown');};
+    setStatus(e.target.checked?'timer hidden at Playtest':'timer shown');};
   $('#hideProgress').onchange=async e=>{await api().set_hide_progress(e.target.checked);
-    setStatus(e.target.checked?'📊 progress bar hidden at Playtest':'progress bar shown');};
+    setStatus(e.target.checked?'progress bar hidden at Playtest':'progress bar shown');};
   $('#cpFruitCost').onchange=async e=>{const v=e.target.value.trim();
     const st=await api().set_checkpoint_fruit_cost(v===''?null:v);
     if(st&&st.error){setStatus('⚠ '+st.error);e.target.value='';}
-    else setStatus(v===''?'checkpoint fruit cost: game default (20)':('🍎 every checkpoint now costs '+v+' fruits — build to test'));};
+    else setStatus(v===''?'checkpoint fruit cost: game default (20)':('every checkpoint now costs '+v+' fruits — build to test'));};
   $('#cpMode').onchange=async e=>{const v=e.target.value;
     const st=await api().set_checkpoint_mode(v===''?null:v);
     if(st&&st.error){setStatus('⚠ '+st.error);e.target.value='';}
-    else setStatus(v===''?'checkpoint mode: game default':(v==='1'?'🚩 VIP auto checkpoints — free unlock as you pass (build + playtest)':'🚩 VIP fruit checkpoints — pay the fruit cost below (build + playtest)'));};
+    else setStatus(v===''?'checkpoint mode: game default':(v==='1'?'VIP auto checkpoints — free unlock as you pass (build + playtest)':'VIP fruit checkpoints — pay the fruit cost below (build + playtest)'));};
   $('#flagCheckpoints').onchange=async e=>{await api().set_flag_checkpoints(e.target.checked);
-    setStatus(e.target.checked?'🚩 checkpoint chests reskinned as non-blocking flags — pair with VIP auto (build + playtest)':'flag-style checkpoints off');};
+    setStatus(e.target.checked?'checkpoint chests reskinned as non-blocking flags — pair with VIP auto (build + playtest)':'flag-style checkpoints off');};
   $('#clonePkg').onchange=async e=>{await api().set_setting('clone_package',e.target.checked);
-    setStatus(e.target.checked?'📲 builds install ALONGSIDE the original (separate app — playtest on device)':'builds replace the original game');};
-  $('#stripStore').onchange=async e=>{await api().set_setting('strip_store',e.target.checked);
-    setStatus(e.target.checked?'ads/store components will be stripped':'ads/store components kept');};
-  $('#powerMode').onchange=async e=>{await api().set_setting('power_mode',e.target.checked);
+    setStatus(e.target.checked?'builds install ALONGSIDE the original (separate app — playtest on device)':'builds replace the original game');};
+  $('#powerMode').onchange=async e=>{
+    if(e.target.checked&&!confirm('Power mode unlocks experimental and untested features that will probabably crash your game, also it gives options to edit palettes and sprite anchors. Please backup your mod, since it is likely going to be bricked.')){
+      e.target.checked=false;return;   // declined — stay in friendly mode
+    }
+    await api().set_setting('power_mode',e.target.checked);
     state.power=e.target.checked;applyPower();
-    setStatus(state.power?'⚡ Power mode ON — advanced tools unlocked (these can crash levels)':'Power mode OFF — friendly mode');};
-  $('#chunkSearch').oninput=renderChunkOptions;
-  $('#chunkList').ondblclick=()=>ACTIONS.editChunk();   // double-click a chunk to open it
-  $('#libList').ondblclick=()=>ACTIONS.editLibChunk();  // double-click a custom chunk to open it
+    setStatus(state.power?'Power mode ON — advanced tools unlocked (these can crash levels)':'Power mode OFF — friendly mode');};
+  $('#chunkSearch')?.addEventListener('input',renderChunkOptions);
+  $('#chunkList')?.addEventListener('dblclick',()=>ACTIONS.editChunk()); // double-click a chunk to open it
+  $('#libList')?.addEventListener('dblclick',()=>ACTIONS.editLibChunk()); // double-click a custom chunk to open it
+  $('#editedList')?.addEventListener('dblclick',async()=>{const n=$('#editedList').value;   // double-click an edited section to open it
+    if(n){loadChunkModel(await api().load_chunk(n));setStatus('editing '+n);}});
   $('#dateSel').onchange=e=>loadDay(e.target.value);
   $$('.gtab').forEach(b=>b.onclick=()=>buildGallery(b.dataset.gtab));
+  // setupRosterRubberband(); // disabled: a drag now MOVES a tile in the roster
+  setupArrangePointer();
+  setupColumnSplitters();
+
+  // palette controls
+  const PAL_TOOL_HINT={paint:'drag a tile into a slot · click a placed tile to turn it (no pen loaded) · right-click clears',
+    turn:'click a placed tile to rotate it 90°',
+    mark:'click a placed tile to stamp a direction arrow → spin dot (cycles) · it bakes onto that sprite'};
+  $$('.paltool').forEach(b=>b.onclick=()=>{state.palTool=b.dataset.paltool;
+    $$('.paltool').forEach(x=>x.classList.toggle('active',x===b));
+    const h=$('#palToolHint');if(h)h.textContent=PAL_TOOL_HINT[state.palTool]||'';});
+  $('#palBarSel').onchange=e=>{state.palIdx=+e.target.value;renderPaletteBar();};
+  $('#palSel').onchange=e=>{state.palIdx=+e.target.value;state.palPen=null;renderPalHead();renderPalGrid();renderPalSrc();renderPaletteBar();};
+  $('#palEdit').onchange=e=>{state.palEdit=e.target.checked;state.palPen=null;renderPalHead();renderPalGrid();renderPalSrc();};
+  $('#palSearch').oninput=renderPalSrc;
+  $('#palNameInput').oninput=e=>{const p=curPal();if(p){p.name=e.target.value;const lbl=p.name||('Palette '+(state.palIdx+1));
+    [$('#palSel'),$('#palBarSel')].forEach(s=>{const o=s&&s.options[state.palIdx];if(o)o.textContent=lbl;});}};
+  $('#palNew').onclick=()=>{state.palettes=state.palettes||[];state.palettes.push({name:'New palette',safe:true,cells:new Array(PAL_N).fill(null)});
+    state.palIdx=state.palettes.length-1;state.palPen=null;renderPalHead();renderPalGrid();renderPalSrc();renderPaletteBar();};
+  $('#palDel').onclick=()=>{if(!curPal())return;state.palettes.splice(state.palIdx,1);
+    if(!state.palettes.length)state.palettes.push({name:'Palette 1',safe:true,cells:new Array(PAL_N).fill(null)});
+    state.palIdx=Math.max(0,Math.min(state.palIdx,state.palettes.length-1));state.palPen=null;renderPalHead();renderPalGrid();renderPalSrc();renderPaletteBar();};
+  $('#palSave').onclick=savePalettes;
+  const movePalette=dir=>{const i=state.palIdx,j=i+dir;   // reorder palettes in the list
+    if(!state.palettes||j<0||j>=state.palettes.length)return;
+    [state.palettes[i],state.palettes[j]]=[state.palettes[j],state.palettes[i]];state.palIdx=j;
+    renderPalHead();renderPalGrid();renderPalSrc();renderPaletteBar();savePalettes();};
+  $('#palMoveUp').onclick=()=>movePalette(-1);
+  $('#palMoveDn').onclick=()=>movePalette(1);
+  $('#paletteModal').onclick=e=>{if(e.target.id==='paletteModal')closePalette();};
+
+  // dev: arrange the roster atlas (order + clusters) that safe-mode users see
+  $('#rosterArrange').onclick=async()=>{
+    state.arrange=!state.arrange;state.arrSel&&state.arrSel.clear();
+    const k=state.galleryKind||'tiles';
+    if(state.arrange){setStatus('loading tiles…');await fetchSprites((state.rosterLayout[k]||galTokens(k)).filter(e=>typeof e==='string'));setStatus('');}
+    buildGallery(k);};
+  $('#rosterAddCluster').onclick=()=>{const k=state.galleryKind||'tiles';
+    (state.rosterLayout[k]=state.rosterLayout[k]||galTokens(k).slice()).unshift({c:'New cluster'});buildGallery(k);};
+  $('#rosterSaveLayout').onclick=async()=>{
+    Object.values(state.rosterLayout||{}).forEach(L=>{if(Array.isArray(L)){while(L.length&&L[L.length-1]==null)L.pop();}});
+    try{await api().save_roster_layout(state.rosterLayout);}catch(e){}
+    state.arrange=false;buildGallery(state.galleryKind||'tiles');setStatus('roster layout saved');};
+  $('#rosterResetLayout').onclick=async()=>{const k=state.galleryKind||'tiles';
+    delete state.rosterLayout[k];
+    if(!Object.keys(state.rosterLayout).some(kk=>Array.isArray(state.rosterLayout[kk]))) delete state.rosterLayout.cols;
+    state.arrange=false; // back to the default category atlas
+    try{await api().save_roster_layout(state.rosterLayout);}catch(e){}
+    buildGallery(k);setStatus('roster layout reset for '+k);};
   $('#gallerySearch').oninput=filterGallery;
   $('#chunkPickSearch').oninput=()=>{clearTimeout(_ckTimer);_ckTimer=setTimeout(renderChunkPickGrid,140);};
   $('#chunkPickSearch').onkeydown=e=>{if(e.key==='Escape')closeChunkPicker();};
@@ -1723,9 +2558,9 @@ function wire(){
   $('#showRot').onchange=e=>{state.showRot=e.target.checked;draw();};
   $('#devMode').onchange=e=>setDevMode(e.target.checked);
   $('#devShoot').onchange=e=>setDevShoot(e.target.checked);
-  $('#devPx').oninput=()=>devLive('px');   $('#devPxN').oninput=()=>devLive('pxN');
-  $('#devPy').oninput=()=>devLive('py');   $('#devPyN').oninput=()=>devLive('pyN');
-  $('#devOx').oninput=()=>devLive();       $('#devOy').oninput=()=>devLive();
+  $('#devPx').oninput=()=>devLive('px'); $('#devPxN').oninput=()=>devLive('pxN');
+  $('#devPy').oninput=()=>devLive('py'); $('#devPyN').oninput=()=>devLive('pyN');
+  $('#devOx').oninput=()=>devLive(); $('#devOy').oninput=()=>devLive();
   $('#devArt').onchange=devPreviewArt;
   $('#devArtBrowse').onclick=openArtPicker;
   $('#devArtPick').onclick=()=>devArtPick();
@@ -1733,13 +2568,13 @@ function wire(){
   $('#artSearch').onkeydown=e=>{if(e.key==='Escape')closeArtPicker();};
   $('#artModal').onclick=e=>{if(e.target.id==='artModal')closeArtPicker();};
   $$('input[name=layer]').forEach(r=>r.onchange=()=>{
-    if(r.value==='grid2'&&!state.gridScope){          // grid-2 locked out -> stay on grid 1
+    if(r.value==='grid2'&&!state.gridScope){ // grid-2 locked out -> stay on grid 1
       setStatus('grid 2 (overlap) is locked — tick “place on grids 1 + 2” to use it',true);
       selectLayerRadio(state.layer); return;}
     state.layer=r.value;
     $$('.layerrow').forEach(x=>x.classList.toggle('active',x.contains(r)));
-    if(r.value==='enemy')setTool('enemy');            // the enemy layer places enemies
-    else if(state.tool==='enemy')setTool('paint');    // a tile layer paints tiles
+    if(r.value==='enemy')setTool('enemy'); // the enemy layer places enemies
+    else if(state.tool==='enemy')setTool('paint'); // a tile layer paints tiles
     hud();draw();});
   $('#gridScope').onchange=e=>{state.gridScope=e.target.checked;
     $('#grid2Row').classList.toggle('locked',!state.gridScope);
@@ -1762,7 +2597,7 @@ function onKey(e){
   const mod=e.metaKey||e.ctrlKey;
   if(mod&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();return;}
   if(mod&&e.key.toLowerCase()==='c'){copyRegion();return;}
-  if(mod&&e.key.toLowerCase()==='v'){enterStamp();return;}   // show the paste ghost; click to place
+  if(mod&&e.key.toLowerCase()==='v'){enterStamp();return;} // show the paste ghost; click to place
   if(e.key==='Enter'){finishPath();return;}
   if(e.key==='Escape'){if(state.tool==='stamp'){exitStamp();return;}state.activePath=null;state.connStart=null;state.floating&&stampFloating();draw();return;}
   if(e.key===']'||e.key==='['){const hv=state.hover||[-1,-1];rotateCell(hv[0],hv[1],e.key===']'?90:-90);return;}
@@ -1777,8 +2612,11 @@ async function boot(){
   cv=$('#cv');ctx=cv.getContext('2d');
   wire();attachCanvas();
   state.catalog=await api().get_catalog();
+  try{state.rosterLayout=await api().get_roster_layout()||{};}catch(e){state.rosterLayout={};}
   await loadElementPanels();
   buildPalettes();
+  try{await loadPalettes();}catch(e){} // curated 12x12 palette sets for the docked bar
+  renderPaletteBar();
   await refreshThemes();
   applyState(await api().get_state());
   await refreshLibrary();

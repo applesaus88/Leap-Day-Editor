@@ -290,8 +290,17 @@ def compile_day_build_full(date_str: str, gen_list: list[dict],
         is_cp = (e["gp"] in custom_checkpoints) or role == "checkpoint"
         out.append({"chunkPath": path, "isCheckpoint": 1 if is_cp else 0,
                     "isEndChunk": 1 if role == "end" else 0, "_cp": is_cp})
+    # The game won't load a level with more than 31 chunks — cap it (keeping the
+    # end chunk) so an over-long authored day can't produce a broken build. The
+    # editor also warns before you exceed it.
+    MAX_CHUNKS = 56
+    if len(out) > MAX_CHUNKS:
+        end = [c for c in out if c.get("isEndChunk")]
+        out = [c for c in out if not c.get("isEndChunk")][:MAX_CHUNKS - len(end)] + end
     # renumber contiguously (chunkNr/index) and re-derive checkpointNr in order.
-    chunks, cp_nr = [], 0
+    # checkpointNr is 1-INDEXED: 0 means "start / no checkpoint" to the game, so a
+    # real checkpoint numbered 0 respawns at the start. First checkpoint = 1.
+    chunks, cp_nr = [], 1
     for nr, c in enumerate(out):
         chunks.append({"chunkNr": nr, "chunkPath": c["chunkPath"],
                        "isCheckpoint": c["isCheckpoint"], "isEndChunk": c["isEndChunk"],

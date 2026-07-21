@@ -40,6 +40,18 @@ ORIG_PKG = "com.nitrome.leapday"
 THROWER_PUPPET_PROJECTILES = {"axe"}
 
 
+def _fix_cactus(xml: str) -> tuple[str, int]:
+    """cactusbig / cactussmall CRASH on spawn in this game version (their prefabs
+    have no working art path — only cactusmed spawns cleanly), which stops the
+    whole chunk from loading. Route both crashing variants to cactusmed. The
+    tokens are distinct whole names (texture names use `cactus_big` with an
+    underscore), so a plain replace is safe. Returns (new_xml, count_replaced)."""
+    n = xml.count("cactusbig") + xml.count("cactussmall")
+    if n:
+        xml = xml.replace("cactusbig", "cactusmed").replace("cactussmall", "cactusmed")
+    return xml, n
+
+
 def _extract_respawn_links(levels: dict[str, str], log=print):
     """Scan authored chunks for 🚩flag(homingcannonUp)→🟢respawn(homingcannonDown)
     connection lines. Returns [(chunk_basename, col, rowFromBottom), ...] for the
@@ -66,6 +78,30 @@ def _extract_respawn_links(levels: dict[str, str], log=print):
             out.append((base, int(col), int(row)))
             log(f"[modbuild] respawn link: {base} → 🟢 cell ({col},{sy_top}) "
                 f"[row_from_bottom={row}]")
+    return out
+
+
+def _extract_ghostr_cells(levels: dict[str, str], log=print):
+    """Scan authored chunks for placed `ghostR` enemies. Returns
+    [(chunk_basename, col, rowFromBottom), ...]. The game can only spawn `ghostL`
+    (a ghostR falls back to the lips failsafe), so the build emits ghostR AS ghostL
+    and the native mod flips just these cells' ghosts to leftToRight=1 — a real
+    right-flying ghost. Rows are bottom-relative (matches the native side)."""
+    from .chunkfmt import Chunk
+    out = []
+    for name, xml in (levels or {}).items():
+        try:
+            ch = Chunk.parse(xml)
+        except Exception:
+            continue
+        base = str(name).split("/")[-1]
+        for e in ch.enemies:
+            if str(e.properties) == "ghostR":
+                col = int(round(e.sx))
+                row = (ch.h - 1) - int(round(e.sy))       # bottom-relative
+                out.append((base, col, row))
+                log(f"[modbuild] ghostR → ghostL+leftToRight=1: {base} cell "
+                    f"({col},{int(round(e.sy))}) [row_from_bottom={row}]")
     return out
 
 
@@ -127,8 +163,9 @@ def build(
         Both default to the project's settings when not passed explicitly."""
     if clone_package is None:
         clone_package = bool(project.settings.get("clone_package"))
-    if strip_store is None:
-        strip_store = bool(project.settings.get("strip_store", clone_package))
+    # Ad / billing / Play-store components are ALWAYS stripped from the manifest
+    # (no longer optional) — both when cloning and on a plain replacement build.
+    strip_store = True
     os.makedirs(out_dir, exist_ok=True)
     unpacked = os.path.join(out_dir, "unpacked")
     log(f"[modbuild] unpacking {os.path.basename(xapk)}")
@@ -188,7 +225,9 @@ def build(
                                f"overwrite existing chunks)")
             # the editor's half-cell-offset "second grid" (<grid2>) isn't a game
             # layer — fold it into <fg> at integer coords so the game renders it.
-            if "<grid2>" in xml:
+            # cactus chunks also need the for_game pass (it drops a support block
+            # under any ground-rooted cactus so it actually spawns).
+            if "<grid2>" in xml or "cactus" in xml:
                 from .chunkfmt import Chunk
                 xml = Chunk.parse(xml).to_xml(for_game=True)
             # optional: brick the dead SIDE columns of wide chunks so their side
@@ -203,10 +242,31 @@ def build(
                         summary["brick_filled"] = summary.get("brick_filled", 0) + 1
                 except Exception as e:
                     log(f"[modbuild] brick-fill skipped for {name!r}: {e}")
+            # behaviour copy: the wooly (snow) trunky is a STATIC turret in the base
+            # game; the user wants it to walk + fall like the normal trunky, so a
+            # placed woolyTrunky spawns as a trunky. Exact-quote match leaves the
+            # distinct woolyTrunkySr / MetalTrunky alone.
+            if 'properties="woolyTrunky"' in xml:
+                summary["woolytrunky_to_trunky"] = (summary.get("woolytrunky_to_trunky", 0)
+                                                    + xml.count('properties="woolyTrunky"'))
+                xml = xml.replace('properties="woolyTrunky"', 'properties="trunky"')
+            # enemy tokens the game can't spawn as-is (e.g. ghostR -> ghostL, which
+            # the native mod then flips to leftToRight=1). Applied here so it runs on
+            # EVERY chunk, not only the ones that take the <grid2>/cactus for_game pass.
+            from .chunkfmt import GAME_ENEMY_REMAP
+            for _src, _dst in GAME_ENEMY_REMAP.items():
+                if f'properties="{_src}"' in xml:
+                    xml = xml.replace(f'properties="{_src}"', f'properties="{_dst}"')
+            # cactusbig/cactussmall keep their tokens: they spawn at their real
+            # 7/3-block sizes once allowed in their theme (allow_cactus_variants
+            # below adds them to every cactus ThemeFilter's allowedEnemies).
             b.set_text(name, xml)
             summary["levels_applied"] += 1
         if project.levels:
             log(f"[modbuild] applied {summary['levels_applied']} custom level(s)")
+            if summary.get("woolytrunky_to_trunky"):
+                log(f"[modbuild] woolyTrunky → trunky (walks + gravity) on "
+                    f"{summary['woolytrunky_to_trunky']} placement(s)")
             if summary.get("brick_filled"):
                 log(f"[modbuild] bricked dead side areas on {summary['brick_filled']} wide chunk(s)")
 
@@ -214,7 +274,8 @@ def build(
         #        lists + Mace firebars). Type trees are generated from the user's
         #        own .so + metadata — no game bytes are kept.
         if (project.overrides or project.firebars or project.element_overrides
-                or project.grapple_skin is not None or project.flag_checkpoints):
+                or project.grapple_skin is not None or project.flag_checkpoints
+                or project.levels):
             so_tmp = os.path.join(out_dir, "global-metadata.dat")
             _extract_entry(apks[BASE_APK], METADATA_ENTRY, so_tmp)
             lib_tmp = os.path.join(out_dir, "libil2cpp.so.src")
@@ -223,6 +284,16 @@ def build(
                                         f"type-tree generation)")
             _extract_entry(apks[ARM64_APK], SO_ENTRY, lib_tmp)
             gen = typetree.TreeGen.from_paths(lib_tmp, so_tmp)
+            # let cactusbig/cactussmall spawn: add them to every cactus theme's
+            # allowedEnemies (the engine's per-enemy spawn gate — only cactusmed
+            # was listed, so big/small never spawned).
+            try:
+                nca = typetree.allow_cactus_variants(b.env, gen, log=log)
+                if nca:
+                    b.mark_dirty()
+                    summary["cactus_themes_allowed"] = nca
+            except Exception as e:
+                log(f"[modbuild] cactus theme-allow skipped: {e}")
             if project.overrides:
                 log("[modbuild] generating Level type tree for ordered-list override")
                 n = typetree.override_level_lists(b.env, gen, project.overrides, log=log)
@@ -374,10 +445,29 @@ def build(
     # author-placed 🟢 cell in its chunk (native libnativemod, checkpoint-hit gated).
     respawn_links = _extract_respawn_links(project.levels, log=log)
 
-    if effective_tuning or respawn_links:
+    # playtest features ported native (baked so Build+Install matches Playtest),
+    # each gated by its Settings toggle. Passed to the config blob as p|…flags.
+    playtest_flags = {
+        "keep_music_bg": bool(getattr(project, "keep_music_bg", False)),
+        "bg_bare": (getattr(project, "bg_mode", "full") == "bare"),
+        "smooth_camera": bool(getattr(project, "smooth_camera", False)),
+        "lock_camera_y": bool(getattr(project, "lock_camera_y", False)),
+        "lock_y_cap_top": bool(getattr(project, "lock_y_cap_top", True)),
+        "hide_timer": bool(getattr(project, "hide_timer", False)),
+        "hide_progress": bool(getattr(project, "hide_progress", False)),
+        "respawn_flags": bool(getattr(project, "respawn_flags", False)),
+    }
+    # cap_top defaults on, so it doesn't count as "a feature is enabled" by itself
+    need_playtest = any(v for k, v in playtest_flags.items() if k != "lock_y_cap_top")
+
+    # the native lib also runs checkpoint_renumber_tick (fixes every checkpoint's
+    # ribbon number + respawn), so embed it for ANY level build even with no tuning.
+    need_cp_fix = bool(project.levels)
+    ghostr_cells = _extract_ghostr_cells(project.levels, log=log)
+    if effective_tuning or respawn_links or need_cp_fix or need_playtest or ghostr_cells:
         if ARM64_APK not in apks:
             raise FileNotFoundError(f"xapk missing {ARM64_APK} (needed for enemy "
-                                    f"tuning / respawn links)")
+                                    f"tuning / respawn links / checkpoint fix)")
         from . import nativemod
         nm_work = os.path.join(out_dir, "nativemod")
         os.makedirs(nm_work, exist_ok=True)
@@ -385,7 +475,9 @@ def build(
         nm_summary = nativemod.build_and_embed(
             effective_tuning, apks[ARM64_APK], modded_arm64_nm, nm_work,
             debug=bool(os.environ.get("LEAPDAY_NATIVEMOD_DEBUG")), log=log,
-            axe_settings=getattr(project, "axe", None), respawn_links=respawn_links)
+            axe_settings=getattr(project, "axe", None), respawn_links=respawn_links,
+            allow_empty=need_cp_fix or need_playtest, playtest=playtest_flags,
+            ghostr_cells=ghostr_cells)
         apks[ARM64_APK] = modded_arm64_nm
         summary["enemy_tunings"] = nm_summary["enemy_tunings"]
         if effective_tuning:
@@ -424,7 +516,20 @@ def build(
             modded = os.path.join(clone_dir, split)   # keep the clean split name
             apkbuild.replace_entry(apks[split], modded, MANIFEST_ENTRY, newman)
             apks[split] = modded
-        summary["strip_store"] = bool(strip_store)
+        summary["strip_store"] = True
+    else:
+        # Plain replacement install (same package): still strip the ad / billing /
+        # Play components from the base manifest so the store SDKs don't init.
+        man = _read_entry_bytes(apks[BASE_APK], MANIFEST_ENTRY)
+        if man is not None:
+            log("[modbuild] stripping store/ads components from manifest")
+            newman = axml.strip_store_only(man, log=log)
+            strip_dir = os.path.join(out_dir, "stripped")
+            os.makedirs(strip_dir, exist_ok=True)
+            modded = os.path.join(strip_dir, BASE_APK)
+            apkbuild.replace_entry(apks[BASE_APK], modded, MANIFEST_ENTRY, newman)
+            apks[BASE_APK] = modded
+        summary["strip_store"] = True
 
     # ---- 3. sign all splits with one shared key --------------------------
     log("[modbuild] signing splits")

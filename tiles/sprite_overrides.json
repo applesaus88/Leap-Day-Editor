@@ -1,4 +1,16 @@
 {
+  "ABBlueBot": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.26
+  },
+  "ABRedBot": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.26
+  },
   "AshSpout_LEFT": {
     "ox": 0.0,
     "oy": 0.0,
@@ -29,11 +41,80 @@
     "px": 0.0,
     "py": 1.0
   },
+  "CuckooClockLeft": {
+    "arrow": 90.0
+  },
+  "CuckooClockRight": {
+    "arrow": 270.0
+  },
+  "CuckooClockStaticLeft": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.02
+  },
+  "CuckooClockStaticRight": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.02
+  },
+  "GhostPotLeftBig": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.2
+  },
+  "GhostPotRight": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.12
+  },
+  "GhostPotUp": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.12
+  },
+  "GhostPotUpBig": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.14
+  },
+  "IceBlob": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.2
+  },
   "ManholeMonster": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.36,
-    "py": 0.38
+    "px": 0.38,
+    "py": 0.26
+  },
+  "PalmTreeBig": {
+    "art": "new_tree_guy_react2",
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "PalmTreeBiggest": {
+    "art": "new_treeguy_poop2",
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.38,
+    "py": 0.26
+  },
+  "PalmTreeSmall": {
+    "art": "CableTileCollision_END_LEFT",
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
   },
   "RewardPowerupBox": {
     "ox": 0.0,
@@ -46,6 +127,12 @@
     "oy": 0.0,
     "px": 0.14,
     "py": 0.58
+  },
+  "SmallMushroom": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.32
   },
   "TotemSnake": {
     "ox": 0.0,
@@ -65,11 +152,44 @@
     "px": 0.2,
     "py": 1.0
   },
+  "TotemSnakePartSpike": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.22,
+    "py": 0.98
+  },
   "Windmill": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.5,
     "py": 0.22
+  },
+  "balloon": {
+    "art": "balloonWithSoldier"
+  },
+  "basic": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.38
+  },
+  "beach_09": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.0,
+    "py": 1.0
+  },
+  "bird": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "bomb": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.1
   },
   "bumper_circle_1": {
     "ox": 0.0,
@@ -132,9 +252,10 @@
     "py": 0.84
   },
   "cable_electric": {
+    "art": "CableTileCollision_END_DOWN",
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.0,
+    "px": -0.04,
     "py": 1.0
   },
   "cable_enemy": {
@@ -143,11 +264,29 @@
     "px": 0.18,
     "py": 0.76
   },
+  "cactusbig": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.06
+  },
+  "cactusmed": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.1
+  },
+  "cactussmall": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.16
+  },
   "candleSoldier": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.22,
-    "py": 0.16
+    "px": 0.5,
+    "py": 0.12
   },
   "checkpoint_02": {
     "ox": 0.0,
@@ -168,6 +307,39 @@
     "py": 1.0
   },
   "checkpoint_08": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.0,
+    "py": 1.0
+  },
+  "chicken": {
+    "art": "chick_egg_lay_1",
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.16
+  },
+  "chicken#runner#basic#spike#beast#meleegreen#trunky#bomb#meleered#piggy": {
+    "art": "beast_idle_0",
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.16
+  },
+  "chicken#runner#shroom#basic#spike#spring#tiny#meleegreen#trunky#bomb#meleered#piggy": {
+    "art": "tiny",
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.16
+  },
+  "clockwork_block_B": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.0,
+    "py": 1.0
+  },
+  "clockwork_block_with_key": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.0,
@@ -215,10 +387,52 @@
     "px": 0.0,
     "py": 1.0
   },
+  "dinosaur": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.04
+  },
+  "eelBtmLeftFirst": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "eelBtmRightFirst": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "eelHoriFirst": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "eelTopLeftFirst": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "eelTopRightFirst": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "eelVertFirst": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.78,
+    "py": 0.24
+  },
   "elevatorL": {
     "ox": -1.0,
     "oy": 0.0,
-    "px": 0.0,
+    "px": -0.04,
     "py": 1.0
   },
   "elevatorR": {
@@ -232,6 +446,12 @@
     "oy": 0.0,
     "px": 0.0,
     "py": 1.0
+  },
+  "fireskull": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
   },
   "flipper_1": {
     "ox": 0.0,
@@ -263,11 +483,23 @@
     "px": 0.08,
     "py": 0.92
   },
+  "fruit2": {
+    "art": "giant_apple-3"
+  },
   "generic_06": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.0,
     "py": 1.0
+  },
+  "ghostL": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.0,
+    "py": 0.6
+  },
+  "ghostR": {
+    "arrow": 270.0
   },
   "greenpipe_down": {
     "arrow": 180.0,
@@ -290,13 +522,6 @@
     "px": 0.0,
     "py": 1.0
   },
-  "greenpipe_up": {
-    "arrow": 0.0,
-    "ox": 0.0,
-    "oy": 0.0,
-    "px": 0.0,
-    "py": 0.94
-  },
   "greenpipe_vert_body": {
     "ox": 0.0,
     "oy": 0.0,
@@ -306,26 +531,32 @@
   "homingcannonDown": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.06,
-    "py": 0.9
+    "px": 0.46,
+    "py": 0.6
   },
   "homingcannonLeft": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.08,
-    "py": 0.92
+    "px": 0.5,
+    "py": 0.5
   },
   "homingcannonRight": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.04,
-    "py": 0.9
+    "px": 0.38,
+    "py": 0.52
   },
   "homingcannonUp": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.04,
-    "py": 0.88
+    "px": 0.5,
+    "py": 0.46
+  },
+  "ice": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.6,
+    "py": 0.26
   },
   "iceCharger": {
     "ox": 0.0,
@@ -333,23 +564,59 @@
     "px": 0.74,
     "py": 0.44
   },
+  "iceDropper": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "jumper": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.06
+  },
   "meleegreen": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.2,
-    "py": 0.48
+    "px": 0.38,
+    "py": 0.26
   },
   "meleered": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.2,
-    "py": 0.4
+    "px": 0.5,
+    "py": 0.12
   },
   "mudtile_3": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.0,
     "py": 0.8
+  },
+  "mushroomMan": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.16
+  },
+  "pigbat": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.34
+  },
+  "piggy": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.2
+  },
+  "runner": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.1
   },
   "sawblade": {
     "art": "lips_run_0",
@@ -358,11 +625,23 @@
     "px": 0.22,
     "py": 0.62
   },
+  "shroom": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.16
+  },
   "skullsoldier": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.24,
     "py": 0.42
+  },
+  "small_homing_block": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": -0.02,
+    "py": 1.04
   },
   "spring": {
     "art": "springhead_bounce_0",
@@ -392,20 +671,20 @@
   "trap01": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.0,
+    "px": 0.5,
     "py": 1.0
   },
   "trap02": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.0,
-    "py": 1.0
+    "px": 0.5,
+    "py": 0.66
   },
   "trap03": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.0,
-    "py": 1.0
+    "px": 0.32,
+    "py": 0.68
   },
   "trap04": {
     "ox": 0.0,
@@ -413,11 +692,41 @@
     "px": 0.0,
     "py": 1.0
   },
+  "trap05": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.36,
+    "py": 0.64
+  },
+  "trap06": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.88
+  },
+  "trap08": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 1.0
+  },
   "trap09": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.0,
     "py": 1.0
+  },
+  "trap105": {
+    "arrow": 0.0
+  },
+  "trap105@180": {
+    "arrow": 180.0
+  },
+  "trap105@270": {
+    "arrow": 90.0
+  },
+  "trap105@90": {
+    "arrow": 270.0
   },
   "trap106": {
     "arrow": 90.0,
@@ -461,7 +770,19 @@
     "px": 0.0,
     "py": 1.0
   },
+  "trap115@90": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.84,
+    "py": 1.0
+  },
   "trap117": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.0,
+    "py": 1.0
+  },
+  "trap117@270": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.0,
@@ -488,31 +809,39 @@
   "trap118@90": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.0,
+    "px": 0.64,
     "py": 0.96
   },
-  "trap124": {
-    "art": "fire_cannon1",
+  "trap12": {
+    "art": "laser_wall_appear-21",
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.5,
-    "py": 0.5,
-    "rotimg": 0.0
+    "px": 0.0,
+    "py": 1.0
   },
-  "trap125": {
-    "art": "fire_cannon1",
+  "trap120": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.5,
-    "py": 0.5
+    "px": -0.04,
+    "py": 1.6
   },
-  "trap126": {
-    "art": "fire_cannon1",
+  "trap121": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.5,
-    "py": 0.5,
-    "rotimg": 90.0
+    "px": 0.08,
+    "py": 0.96
+  },
+  "trap122": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.0,
+    "py": 0.94
+  },
+  "trap123": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": -0.44,
+    "py": 1.0
   },
   "trap127": {
     "art": "trap127",
@@ -521,28 +850,12 @@
     "px": 0.0,
     "py": 1.0
   },
-  "trap128": {
-    "art": "fire_cannon1",
-    "ox": 0.0,
-    "oy": 0.0,
-    "px": 0.5,
-    "py": 0.5,
-    "rotimg": 180.0
-  },
   "trap129": {
     "flip": true,
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.0,
     "py": 0.52
-  },
-  "trap130": {
-    "art": "fire_cannon1",
-    "ox": 0.0,
-    "oy": 0.0,
-    "px": 0.5,
-    "py": 0.5,
-    "rotimg": 270.0
   },
   "trap131": {
     "flip": true
@@ -557,6 +870,13 @@
   "trap133": {
     "rotimg": 180
   },
+  "trap15": {
+    "art": "mace_peg",
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.0,
+    "py": 1.0
+  },
   "trap23": {
     "ox": 0.0,
     "oy": 0.0,
@@ -569,22 +889,70 @@
     "px": 0.34,
     "py": 0.66
   },
+  "trap_rotating_block7": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.32,
+    "py": 0.66
+  },
   "trunky": {
     "ox": 0.0,
     "oy": 0.0,
     "px": 0.34,
     "py": 0.32
   },
+  "valentinesBlob": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.0
+  },
+  "valentinesCupid": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.5
+  },
+  "walkerreg": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.26
+  },
+  "walkerspike": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.26
+  },
   "wallplantL": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.4,
+    "px": 0.64,
     "py": 0.44
   },
   "woolyTrunky": {
     "ox": 0.0,
     "oy": 0.0,
-    "px": 0.0,
-    "py": 0.52
+    "px": 0.5,
+    "py": 0.24
+  },
+  "woolyTrunkySr": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.38,
+    "py": 0.12
+  },
+  "worm": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.66
+  },
+  "zombie": {
+    "ox": 0.0,
+    "oy": 0.0,
+    "px": 0.5,
+    "py": 0.06
   }
 }

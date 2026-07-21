@@ -539,6 +539,189 @@ def enable_puppet_projectile_sprites(env, prefab_names, *, log=print) -> int:
     return n
 
 
+def allow_cactus_variants(env, gen: "TreeGen", *, log=print) -> int:
+    """cactusbig / cactussmall never spawn because no theme lists them: each
+    ThemeFilter.allowedEnemies contains cactusmed but not big/small, so the engine
+    refuses to instantiate them. Add both to every ThemeFilter that already allows
+    cactusmed, so all three sizes spawn wherever the medium one does. Data-only —
+    no prefab or code change. Returns the number of ThemeFilters updated."""
+    gopid: dict[str, int] = {}
+    for o in env.objects:
+        if o.type.name == "GameObject":
+            try:
+                nm = o.read().m_Name
+                if nm in ("cactusmed", "cactusbig", "cactussmall"):
+                    gopid[nm] = o.path_id
+            except Exception:
+                pass
+    if not all(k in gopid for k in ("cactusmed", "cactusbig", "cactussmall")):
+        log("[typetree] cactus prefabs not all found; theme-allow skipped")
+        return 0
+    med = gopid["cactusmed"]
+    add = [gopid["cactusbig"], gopid["cactussmall"]]
+
+    def _shared2_fid(reader):
+        """The file id that points at sharedassets2.assets (where the cactus
+        prefabs live) FROM this reader's own serialized file — it varies per file."""
+        try:
+            for i, ext in enumerate(reader.assets_file.externals or []):
+                if getattr(ext, "name", "").lower().endswith("sharedassets2.assets"):
+                    return i + 1
+        except Exception:
+            pass
+        return None
+
+    def _augment_med(lst):
+        """If cactusmed is in this PPtr list, append big/small with med's file id."""
+        if not isinstance(lst, list):
+            return False
+        med_ref = next((e for e in lst if isinstance(e, dict) and e.get("m_PathID") == med), None)
+        if med_ref is None:
+            return False
+        fid = med_ref.get("m_FileID", 2)
+        have = {e.get("m_PathID") for e in lst if isinstance(e, dict)}
+        ch = False
+        for pid in add:
+            if pid not in have:
+                lst.append({"m_FileID": fid, "m_PathID": pid})
+                ch = True
+        return ch
+
+    edited = 0
+    # 1. theme gate: add big/small to EVERY theme's allowedEnemies so a cactus
+    #    spawns regardless of the level's theme. allowedEnemies = [{minDate,
+    #    gameObjects:[PPtr]}]; the cactus file id is resolved per serialized file.
+    tf_nodes = gen.nodes("ThemeFilter")
+    for tf in find_mono(env, "ThemeFilter"):
+        try:
+            tt = tf.read_typetree(tf_nodes)
+        except Exception:
+            continue
+        ae = tt.get("allowedEnemies")
+        if not isinstance(ae, list):
+            continue
+        fid = _shared2_fid(tf)
+        if fid is None:
+            continue                                # this file can't reference the cactus prefabs
+        changed = False
+        for grp in ae:
+            gos = grp.get("gameObjects") if isinstance(grp, dict) else None
+            if not isinstance(gos, list):
+                continue
+            have = {e.get("m_PathID") for e in gos if isinstance(e, dict)}
+            for pid in add:
+                if pid not in have:
+                    gos.append({"m_FileID": fid, "m_PathID": pid})
+                    changed = True
+        if changed:
+            tf.save_typetree(tt, tf_nodes)
+            edited += 1
+            log(f"[typetree] ThemeFilter {tt.get('m_Name') or ''}: allowed cactusbig + cactussmall")
+    # 2. spawn-by-name registry: EnemyInstancer. Not being in these lists makes the
+    #    engine fall back to backupEnemyBasic ("lips"), so add big/small next to med.
+    ei_nodes = gen.nodes("EnemyInstancer")
+    for ei in find_mono(env, "EnemyInstancer"):
+        try:
+            tt = ei.read_typetree(ei_nodes)
+        except Exception:
+            continue
+        changed = False
+        for fld in ("enemyFullList", "enemiesToSpawn"):
+            if _augment_med(tt.get(fld)):
+                changed = True
+        for grp in (tt.get("masterEnemies") or []):
+            if isinstance(grp, dict) and _augment_med(grp.get("enemies")):
+                changed = True
+        if changed:
+            ei.save_typetree(tt, ei_nodes)
+            edited += 1
+            log("[typetree] EnemyInstancer: registered cactusbig + cactussmall (no more lips fallback)")
+    return edited
+
+
+def scale_cactus_variants(env, gen: "TreeGen", *, log=print) -> int:
+    """cactusbig / cactussmall crash on spawn in this game version while cactusmed
+    works (their prefabs are otherwise identical to med — only the unique giant /
+    small sprite sets differ). Rebuild big/small FROM med: copy med's sprites and
+    collider onto them, then scale the transform so big stands ~7 blocks and small
+    ~3 (med = 5). They then spawn med's proven art at the right sizes instead of
+    the crashing variants. Returns the number of prefabs rebuilt."""
+    by_name: dict[str, list] = {}
+    for o in env.objects:
+        if o.type.name == "GameObject":
+            try:
+                by_name.setdefault(o.read().m_Name, []).append(o)
+            except Exception:
+                pass
+    if "cactusmed" not in by_name:
+        return 0
+    anim_nodes = gen.nodes("EnemyAnimWalking")
+    SPRITE_ARRAYS = ("walkingSprites", "appearingSprites", "disappearingSprites",
+                     "dyingSprites", "stompedSprites")
+
+    def _readers(go):
+        for c in getattr(go.read(), "m_Components", []):
+            ref = c.component if hasattr(c, "component") else c
+            try:
+                yield ref.deref()
+            except Exception:
+                continue
+
+    def _find(go, typ=None, cls=None):
+        for r in _readers(go):
+            if typ and r.type.name == typ:
+                return r
+            if cls and r.type.name == "MonoBehaviour" and script_class(r) == cls:
+                return r
+        return None
+
+    med = by_name["cactusmed"][0]
+    m_anim = _find(med, cls="EnemyAnimWalking")
+    m_sr = _find(med, typ="SpriteRenderer")
+    m_box = _find(med, typ="BoxCollider2D")
+    m_tr = _find(med, typ="Transform")
+    if not (m_anim and m_sr and m_box and m_tr):
+        log("[typetree] cactusmed components incomplete; cactus scaling skipped")
+        return 0
+    m_anim_tt = m_anim.read_typetree(anim_nodes)
+    m_sprite = m_sr.read_typetree().get("m_Sprite")
+    m_box_tt = m_box.read_typetree()
+    m_scale = m_tr.read_typetree().get("m_LocalScale", {"x": 1.0, "y": 1.0, "z": 1.0})
+
+    edited = 0
+    for name, factor in (("cactusbig", 1.4), ("cactussmall", 0.6)):
+        for go in by_name.get(name, []):
+            anim = _find(go, cls="EnemyAnimWalking")
+            sr = _find(go, typ="SpriteRenderer")
+            box = _find(go, typ="BoxCollider2D")
+            tr = _find(go, typ="Transform")
+            if not (anim and sr and box and tr):
+                continue
+            att = anim.read_typetree(anim_nodes)
+            for k in SPRITE_ARRAYS:
+                if k in m_anim_tt and k in att:
+                    att[k] = m_anim_tt[k]
+            anim.save_typetree(att, anim_nodes)
+            st = sr.read_typetree()
+            if m_sprite is not None:
+                st["m_Sprite"] = m_sprite
+            sr.save_typetree(st)
+            bt = box.read_typetree()
+            for k in ("m_Size", "m_Offset", "m_SpriteTilingProperty"):
+                if k in m_box_tt:
+                    bt[k] = m_box_tt[k]
+            box.save_typetree(bt)
+            tt = tr.read_typetree()
+            tt["m_LocalScale"] = {"x": m_scale["x"] * factor,
+                                  "y": m_scale["y"] * factor,
+                                  "z": m_scale.get("z", 1.0)}
+            tr.save_typetree(tt)
+            edited += 1
+            log(f"[typetree] {name}: rebuilt from cactusmed, scale ×{factor} "
+                f"(~{int(round(5 * factor))} blocks)")
+    return edited
+
+
 def force_powerup_box_grappling_hook(env, gen: "TreeGen", *, log=print) -> int:
     """Set every RewardPowerupBox.displayPowerups[*].type to GRAPPLING_HOOK (13) so
     a placed "Powerup reward" box always grants the grappling hook through the

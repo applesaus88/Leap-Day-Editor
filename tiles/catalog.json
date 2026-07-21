@@ -3753,7 +3753,7 @@
    "name": "trap25",
    "count": 51,
    "category": "hazard",
-   "label": "Mace (spiked ball)"
+   "label": "Firebar (double)"
   },
   {
    "name": "trap26",
@@ -4043,18 +4043,6 @@
    "label": "Spring"
   },
   {
-   "name": "trap124",
-   "count": 40,
-   "category": "hazard",
-   "label": "Cannon"
-  },
-  {
-   "name": "trap125",
-   "count": 59,
-   "category": "hazard",
-   "label": "Cannon"
-  },
-  {
    "name": "trap126",
    "count": 97,
    "category": "hazard",
@@ -4187,54 +4175,6 @@
    "label": "Squash block"
   },
   {
-   "name": "trap_yolk_cannon_1",
-   "count": 25,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
-   "name": "trap_yolk_cannon_2",
-   "count": 24,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
-   "name": "trap_yolk_cannon_3",
-   "count": 39,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
-   "name": "trap_yolk_cannon_4",
-   "count": 21,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
-   "name": "trap_yolk_cannon_5",
-   "count": 22,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
-   "name": "trap_yolk_cannon_6",
-   "count": 17,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
-   "name": "trap_yolk_cannon_7",
-   "count": 12,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
-   "name": "trap_yolk_cannon_8",
-   "count": 10,
-   "category": "hazard",
-   "label": "Yolk cannon"
-  },
-  {
    "name": "fruit0",
    "count": 15583,
    "category": "fruit",
@@ -4263,6 +4203,462 @@
    "count": 222,
    "category": "autotile",
    "label": "Auto Tile"
+  },
+  {
+   "name": "generic_101",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "generic_102",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "generic_103",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "generic_104",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "generic_105",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "generic_106",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "generic_107",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_01",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_02",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_03",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_04",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_05",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_06",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_07",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_08",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_09",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_10",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_11",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "magma_scenery_12",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_01",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_02",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_03",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_04",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_05",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_06",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_07",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_08",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_09",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_10",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_11",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "spooky_scenery_12",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tile0",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile10",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile11",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile12",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile13",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile14",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile15",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile16",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile17",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile18",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile19",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile2",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile3",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile4",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile5",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile6",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile7",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile8",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "tile9",
+   "count": 0,
+   "category": "solid",
+   "placeable": true
+  },
+  {
+   "name": "trap124",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap125",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_1",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_2",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_3",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_4",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_5",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_6",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_7",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "trap_yolk_cannon_8",
+   "count": 0,
+   "category": "hazard",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_01",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_02",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_03",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_04",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_05",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_06",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_07",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_08",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_09",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_10",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_11",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "tropical_scenery_12",
+   "count": 0,
+   "category": "decoration",
+   "placeable": true
+  },
+  {
+   "name": "CableLine",
+   "count": 0,
+   "category": "platform",
+   "placeable": true
+  },
+  {
+   "name": "CableBattery",
+   "count": 0,
+   "category": "platform",
+   "placeable": true
+  },
+  {
+   "name": "pipe1",
+   "count": 0,
+   "category": "platform",
+   "placeable": true
+  },
+  {
+   "name": "Autotile_CloudPlat",
+   "count": 0,
+   "category": "autotile",
+   "placeable": true
   }
  ],
  "enemies": [

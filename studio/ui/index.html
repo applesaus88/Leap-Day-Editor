@@ -17,27 +17,9 @@
     <span class="sep"></span>
     <button data-act="build" class="power-only">Build APK</button>
     <button data-act="buildInstall">Build + Install</button>
-    <span class="chk" title="Every build applies VIP, all characters, and no ads">👑 VIP+chars+no-ads: always on</span>
-    <label class="chk" title="Rename the package (per-mod id from the project name) so the build installs as its OWN app, next to the stock Leap Day, instead of replacing it. Needs an on-device test."><input type="checkbox" id="clonePkg" style="vertical-align:-1px"/> 📲 install alongside original</label>
-    <label class="chk" title="When installing alongside, also strip ad / billing / Play-store components from the manifest so the SDKs don't auto-init."><input type="checkbox" id="stripStore" checked style="vertical-align:-1px"/> remove ads/store</label>
-    <label class="chk" title="Force the player to always play as this character. Lick grants his grapple/tongue. Needs an on-device playtest.">play as <select id="forceChar" style="max-width:130px"></select></label>
-    <label class="chk" title="Give the grappling hook to any character: clones that character's look onto Lick (who owns the grapple) and forces you to play as Lick. You look like the chosen character AND can grapple. Overrides 'play as'.">🪝 grapple as <select id="grappleSkin" style="max-width:130px"></select></label>
-    <label class="chk" title="Permanent grappling hook from spawn on ANY character, no pickup needed (patches IsGrapplingHookActive). The mechanic works and you can grapple at will. Limitation: it draws as the bare pink line, not the animated metal-hook sprite — that metal animation only loads via the powerup's real activation, which a no-ads build can't reach.">🪝<input type="checkbox" id="grapplingHook" style="vertical-align:-1px"/> grappling hook (from spawn)</label>
-    <label class="chk" title="Pin every checkpoint to one mode. VIP auto = free auto-unlock (unlocks as you pass, no fruits, no ad). VIP fruit = the pay-fruits chest (set the cost below; 0 = free). Blank = game default. .so patch — needs an on-device playtest.">🚩 checkpoint mode <select id="cpMode" style="max-width:120px"><option value="">default</option><option value="1">VIP auto (free)</option><option value="2">VIP fruit (pay)</option></select></label>
-    <label class="chk" title="For VIP fruit mode: how many fruits EVERY checkpoint costs to unlock (stock 20; 0 = free). Changes the requirement, the amount deducted, AND the number on the sign so they match. Global; blank = game default. Range 0–4095. .so patch — needs an on-device playtest.">🍎 checkpoint fruits <input type="number" id="cpFruitCost" min="0" max="4095" placeholder="20" style="width:52px"/></label>
-    <label class="chk" title="Reskin every checkpoint chest as a raised FLAG and make it non-blocking (collider becomes a trigger, so you pass through). The real checkpoint trigger stays intact — best paired with VIP auto so you just walk past the flag. Global bundle edit; needs an on-device playtest.">🚩<input type="checkbox" id="flagCheckpoints" style="vertical-align:-1px"/> flag-style checkpoints</label>
-    <label class="chk" title="Make EVERY enemy fire / spawn faster by this multiplier (multiplies each enemy's cadence timer via the native lib). 1 = stock. e.g. 5 = ~5× faster shooting/spawning across the whole game. Per-enemy tuning still overrides. Needs an on-device playtest.">⚡ enemy spawn/fire rate ×<input type="number" id="spawnMult" min="1" max="100" step="1" placeholder="1" style="width:48px"/></label>
-    <label class="chk power-only" title="Snap every section to a legal width (14, 28 or 42). The game grid is 14 wide, so off-grid widths (e.g. 15) don't render — this enforces it on load and at build."><input type="checkbox" id="enforceWidth" checked style="vertical-align:-1px"/> lock width 14/28/42</label>
-    <label class="chk" title="Keep the music playing (no side-room muffle/fade) and drag the background along with the camera when you walk off the main column — for wide sections (28/42 wide = 2–3 screens). Applied at Playtest via the on-device agent; physics, camera and screen transitions stay stock."><input type="checkbox" id="keepMusicBg" style="vertical-align:-1px"/> 🎵 keep music+bg offscreen</label>
-    <label class="chk" id="bgModeWrap" title="Background style on wide (28/42) sections when the music+bg keep-alive is on. Full = copy the level's animated scenery (castle, candles, balloons…) onto every screen. Bare = strip the scenery on every screen (even the main one) so you just get the plain moon/stars sky.">bg: <select id="bgMode" style="vertical-align:-1px"><option value="full">full scenery</option><option value="bare">bare sky</option></select></label>
-    <label class="chk" title="On sections wider than one screen (28/42 wide = 2–3 screens) the camera follows the player continuously instead of snapping between the fixed screen columns. Applied at Playtest via the on-device agent; single-screen (14-wide) sections keep the stock centred camera. Independent of the music+bg setting."><input type="checkbox" id="smoothCamera" style="vertical-align:-1px"/> 🎥 smooth camera</label>
-    <label class="chk" title="Lock the camera to each section's vertical frame on EVERY section (any width), so it never scrolls up/down into the neighbouring section. Short sections anchor to their bottom; taller sections follow the player but stay contained. Applied at Playtest via the on-device agent."><input type="checkbox" id="lockCameraY" style="vertical-align:-1px"/> 🔒 lock camera Y</label>
-    <label class="chk" title="Only affects 🔒 lock camera Y. ON: the view is boxed inside the current section (caps top AND bottom). OFF: caps only the bottom (no dead space below) and leaves the top open, so you can see the section you're about to jump up into."><input type="checkbox" id="lockYCapTop" style="vertical-align:-1px"/> 📦 contain top</label>
-    <label class="chk" title="Baked into the BUILD (not playtest-only): on wide (>14) custom sections, fill the dead side columns — the ones with no gameplay — with brick, so their side screens read as solid wall instead of empty background. The play area is left untouched. Reversible: toggle off and rebuild."><input type="checkbox" id="brickDeadSides" style="vertical-align:-1px"/> 🧱 brick dead sides</label>
-    <label class="chk" title="Hide the run timer (the 00:00 readout) during Playtest. On-device agent; visual only."><input type="checkbox" id="hideTimer" style="vertical-align:-1px"/> ⏱ hide timer</label>
-    <label class="chk" title="Hide the progression bar (the checkpoint/progress line) during Playtest. On-device agent; visual only."><input type="checkbox" id="hideProgress" style="vertical-align:-1px"/> 📊 hide progress bar</label>
-    <label class="chk" title="Respawn flags: every 🚩 Respawn Flag you place (from the element palette) becomes a touch-to-save checkpoint at Playtest — walk into it to set your respawn (open→flap flag animation, chunk-relative respawn, no missile). Applied via the on-device cannon→checkpoint agent. Placing a flag turns this on automatically."><input type="checkbox" id="respawnFlags" style="vertical-align:-1px"/> 🚩 Respawn flags</label>
-    <label class="chk" id="powerToggle" title="Power mode unlocks advanced tools (sprite-fix, experimental longer levels, raw placement). These give more control but can crash levels."><input type="checkbox" id="powerMode" style="vertical-align:-1px"/> ⚡ Power mode</label>
+    <span class="sep"></span>
+    <button data-act="openSettings" title="All mod settings — character, checkpoints, enemies, camera, build options">Settings</button>
+    <label class="chk" id="powerToggle" title="Power mode unlocks advanced tools (sprite-fix, experimental longer levels, raw placement). These give more control but can crash levels."><input type="checkbox" id="powerMode" style="vertical-align:-1px"/> Power</label>
     <span id="status" class="status"></span>
   </header>
 
@@ -66,15 +48,15 @@
       <div class="panel">
         <h3>Layers</h3>
         <div id="layers">
-          <label class="layerrow" title="Non-interactive decoration drawn IN FRONT of everything (game: fg). No collision."><input type="radio" name="layer" value="fg"> <span>🖼 foreground</span>
+          <label class="layerrow" title="Non-interactive decoration drawn IN FRONT of everything (game: fg). No collision."><input type="radio" name="layer" value="fg"> <span>foreground</span>
             <input type="checkbox" class="vis" data-layer="fg" checked title="visible"></label>
-          <label class="layerrow" title="Enemies — their own layer. Select it to place enemies; untick its box to HIDE them. They spawn from grid 1 in-game regardless."><input type="radio" name="layer" value="enemy"> <span>👾 enemy</span>
+          <label class="layerrow" title="Enemies — their own layer. Select it to place enemies; untick its box to HIDE them. They spawn from grid 1 in-game regardless."><input type="radio" name="layer" value="enemy"> <span>enemy</span>
             <input type="checkbox" class="vis" data-layer="enemy" checked title="visible"></label>
-          <label class="layerrow" id="grid2Row" title="Grid 2 — an ALIGNED copy of grid 1, drawn on top, for placing items that OVERLAP the main tiles at the same cells. Builds into the game's foreground layer (no collision)."><input type="radio" name="layer" value="grid2"> <span>▦ grid 2 (overlap)</span>
+          <label class="layerrow" id="grid2Row" title="Grid 2 — an ALIGNED copy of grid 1, drawn on top, for placing items that OVERLAP the main tiles at the same cells. Builds into the game's foreground layer (no collision)."><input type="radio" name="layer" value="grid2"> <span>grid 2 (overlap)</span>
             <input type="checkbox" class="vis" data-layer="grid2" checked title="visible"></label>
-          <label class="layerrow active" title="Grid 1 — solid terrain / blocks the player collides with (game: active)."><input type="radio" name="layer" value="active" checked> <span>🧱 block (grid 1)</span>
+          <label class="layerrow active" title="Grid 1 — solid terrain / blocks the player collides with (game: active)."><input type="radio" name="layer" value="active" checked> <span>block (grid 1)</span>
             <input type="checkbox" class="vis" data-layer="active" checked title="visible"></label>
-          <label class="layerrow" title="Non-interactive decoration drawn BEHIND everything (game: bg). No collision."><input type="radio" name="layer" value="bg"> <span>🖼 background</span>
+          <label class="layerrow" title="Non-interactive decoration drawn BEHIND everything (game: bg). No collision."><input type="radio" name="layer" value="bg"> <span>background</span>
             <input type="checkbox" class="vis" data-layer="bg" checked title="visible"></label>
         </div>
         <label class="chk" id="gridScopeWrap" title="Restrict where you can place: 'grid 1 only' locks out the grid-2 overlap copy; 'grids 1 + 2' lets you use both."><input type="checkbox" id="gridScope" checked> place on grids 1 + 2 <span style="opacity:.6">(off = grid 1 only)</span></label>
@@ -82,12 +64,12 @@
         <label class="chk"><input type="checkbox" id="showGrid" checked> grid</label>
         <label class="chk power-only"><input type="checkbox" id="gameView" checked> game-accurate placement (true size + pivot)</label>
         <label class="chk power-only"><input type="checkbox" id="showRot" checked> ↻ rotation arrows (rotate a tile with [ ])</label>
-        <label class="chk power-only" hidden><input type="checkbox" id="devMode"> 🛠 dev: edit sprite anchor / arrow</label>
-        <label class="chk power-only" hidden><input type="checkbox" id="devShoot"> ⚙ dev: bake shoot speeds</label>
+        <label class="chk power-only" hidden><input type="checkbox" id="devMode"> dev: edit sprite anchor / arrow</label>
+        <label class="chk power-only" hidden><input type="checkbox" id="devShoot"> dev: bake shoot speeds</label>
       </div>
 
       <div class="panel" id="firebarPanel" hidden>
-        <h3><span id="fbTitle">🔥 Firebar</span> <span class="status" id="fbInfo" style="margin:0;max-width:none"></span></h3>
+        <h3><span id="fbTitle">Firebar</span> <span class="status" id="fbInfo" style="margin:0;max-width:none"></span></h3>
         <div id="fbMace" class="fbgrid">
           <label>parts <input id="fbLen" type="number" min="1" max="8" value="3" title="balls per arm (amount of red parts)"></label>
           <label>start
@@ -106,30 +88,26 @@
         </div>
         <div id="fbFields" class="fbgrid" hidden></div>
         <div id="fbVariants" hidden></div>
-        <button id="fbBtn" data-act="pickFirebar" class="accent" style="width:100%;margin-top:6px">🔥 Use this firebar (paint it)</button>
+        <button id="fbBtn" data-act="pickFirebar" class="accent" style="width:100%;margin-top:6px">Use this firebar (paint it)</button>
         <div class="chk" id="fbHint">One parametric trap — pick settings, then paint cells. Each distinct config claims a mace slot. <b>Build + playtest to confirm</b>.</div>
       </div>
 
       <div class="panel" id="enemyTunePanel" hidden>
-        <h3>🎯 This enemy only <span class="status" id="etInfo" style="margin:0;max-width:none"></span></h3>
+        <h3>This enemy only <span class="status" id="etInfo" style="margin:0;max-width:none"></span></h3>
         <div class="fbgrid">
-          <label>shoots
+          <label class="et-shoot">shoots
             <select id="etProj" title="what THIS one enemy fires (leave = its default)">
               <option value="">— leave default —</option>
             </select></label>
-          <label>health <input id="etHealth" type="number" min="1" max="9999" placeholder="default"></label>
-          <label>walk speed <input id="etWalk" type="number" min="0" max="200" placeholder="default" title="walking enemies only"></label>
-          <label>shoot speed × <select id="etShootMult" title="multiply this enemy's launch speed (1 = normal, 0.5 = half, 2 = double)"></select></label>
-          <label>fire rate × <select id="etFireMult" title="how often it shoots/spawns (2 = twice as fast). Works on enemies/spawners with a cadence field."></select></label>
-          <label title="Where the projectile spawns, FORWARD of the enemy (in its facing direction), in world units. Raise if shots spawn inside the enemy; default 16.">muzzle fwd <input id="etMuzzleX" type="number" min="0" max="200" step="1" placeholder="16"></label>
-          <label title="Where the projectile spawns ABOVE the enemy, in world units. Raise if shots (e.g. coconut) spawn in the ground and get instantly destroyed; default 6.">muzzle up <input id="etMuzzleY" type="number" min="-50" max="200" step="1" placeholder="6"></label>
+          <label class="et-walk">walk speed × <select id="etWalk" title="multiply this walking enemy's move speed (1 = normal, 0.5 = half, 2 = double, 0 = frozen)"></select></label>
+          <label class="et-shoot">shoot speed × <select id="etShootMult" title="multiply this enemy's launch speed (1 = normal, 0.5 = half, 2 = double)"></select></label>
+          <label class="et-shoot">fire rate × <select id="etFireMult" title="how often it shoots/spawns (2 = twice as fast). Works on enemies/spawners with a cadence field."></select></label>
         </div>
         <div id="axeSettings" hidden style="margin-top:8px;border-top:1px solid var(--line,#333);padding-top:8px">
-          <div class="chk" style="margin-bottom:6px">🪓 <b>Axe boomerang</b> — how the thrown axe flies. This is a <b>global</b> setting: it applies to every axe in the mod. Leave blank for the default.</div>
+          <div class="chk" style="margin-bottom:6px"><b>Axe boomerang</b> — how the thrown axe flies. This is a <b>global</b> setting: it applies to every axe in the mod. Leave blank for the default.</div>
           <div class="fbgrid">
-            <label>range <input id="axeRange" type="number" min="4" max="200" step="1" placeholder="28" title="how far the axe flies out before curving back (world units; ~16 = one tile)"></label>
-            <label>speed <input id="axeSpeed" type="number" min="10" max="400" step="5" placeholder="110" title="flight speed (world units/sec)"></label>
-            <label>spin <input id="axeSpin" type="number" min="0" max="3000" step="50" placeholder="900" title="spin rate (degrees/sec)"></label>
+            <label>range (blocks) <input id="axeRange" type="number" min="0.25" max="14" step="0.25" placeholder="2" title="how far the axe flies out before curving back, in blocks (1 block = 14 units)"></label>
+            <label>shot speed × <input id="axeSpeed" type="number" min="0.1" max="4" step="0.1" placeholder="1" title="flight speed as a multiplier of the default (1 = normal, 2 = twice as fast)"></label>
             <label>hang <input id="axeHang" type="number" min="0" max="3" step="0.05" placeholder="0.25" title="seconds it pauses at the far end before coming back"></label>
           </div>
         </div>
@@ -138,7 +116,7 @@
       </div>
 
       <div class="panel" id="devPanel" hidden>
-        <h3>🛠 Sprite fix <span id="devTok" class="status" style="max-width:none;margin:0;color:var(--accent)"></span></h3>
+        <h3>Sprite fix <span id="devTok" class="status" style="max-width:none;margin:0;color:var(--accent)"></span></h3>
         <canvas id="devPrev" class="devprev" width="120" height="120"></canvas>
         <div class="devrow"><label>anchor X <input id="devPx" type="range" min="-2" max="3" step="0.02"></label><input id="devPxN" class="devnum" type="number" min="-2" max="3" step="0.02"></div>
         <div class="devrow"><label>anchor Y <input id="devPy" type="range" min="-2" max="3" step="0.02"></label><input id="devPyN" class="devnum" type="number" min="-2" max="3" step="0.02"></div>
@@ -147,11 +125,11 @@
         <div class="devrow"><label>sprite <input id="devArt" list="devArtList" placeholder="(auto) — type to pick another"></label><button id="devArtBrowse" class="devmini" title="browse sprites with previews">▦</button><button id="devArtPick" class="devmini" title="eyedropper: click a tile/enemy on the canvas to lift its art">⊙</button></div>
         <datalist id="devArtList"></datalist>
         <div class="row"><button data-act="devSave" class="accent">Save fix</button><button data-act="devReset">Reset</button></div>
-        <div class="chk">edits the selected tile (or enemy). 🟥 cross = cell origin the pivot snaps to · 🟨 box = sprite draw area. <b>sprite</b> = pick the correct art if the wrong one was auto-detected. Saved to tiles/sprite_overrides.json and applied to the editor permanently.</div>
+        <div class="chk">edits the selected tile (or enemy). cross = cell origin the pivot snaps to · box = sprite draw area. <b>sprite</b> = pick the correct art if the wrong one was auto-detected. Saved to tiles/sprite_overrides.json and applied to the editor permanently.</div>
       </div>
 
       <div class="panel" id="devShootPanel" hidden>
-        <h3>⚙ Shoot-speed bakes <span class="status" style="max-width:none;margin:0;color:var(--accent)">dev</span></h3>
+        <h3>Shoot-speed bakes <span class="status" style="max-width:none;margin:0;color:var(--accent)">dev</span></h3>
         <label>enemy <select id="devShootEnemy"></select></label>
         <div id="devShootRows" style="margin-top:6px"></div>
         <div class="row" style="margin-top:6px">
@@ -160,15 +138,9 @@
         <div class="chk">Baseline launch speed for every thing <b>this enemy</b> can spawn — blank = the game's default. A placement's <b>shoot speed ×</b> scales it. Global (all projects). Saved to core/native/shoot_bakes.json; takes effect on the next build.</div>
       </div>
 
-      <div class="panel grow">
-        <button data-act="openGallery" class="accent" style="margin-bottom:7px">▦ Browse all tiles & enemies</button>
-        <h3>Tiles <input id="tileSearch" placeholder="filter…"></h3>
-        <div id="tilePalette" class="palette"></div>
-        <h3 style="margin-top:8px">Enemies <input id="enemySearch" placeholder="filter…"></h3>
-        <div id="enemyPalette" class="palette"></div>
-        <div class="selinfo">Selected: <b id="selName">generic_06</b></div>
-      </div>
     </aside>
+
+    <div class="colsplit" id="splitL" title="Drag to resize the tools panel"></div>
 
     <!-- CENTER: canvas -->
     <section id="center">
@@ -184,24 +156,35 @@
         <button data-act="saveLevel" class="accent">Save level → mod</button>
       </div>
       <div id="canvasWrap"><canvas id="cv"></canvas>
-        <div id="previewBar" hidden>👁 <b>Whole-level preview</b> <span id="previewInfo"></span> — read-only, scroll/zoom to inspect <button data-act="exitPreview">✕ Exit</button></div>
+        <div id="previewBar" hidden><b>Whole-level preview</b> <span id="previewInfo"></span> — read-only, scroll/zoom to inspect <button data-act="exitPreview">✕ Exit</button></div>
       </div>
       <div id="hud"><span id="hudCell">—</span> · <span id="hudZoom"></span> · layer:<b id="hudLayer">active</b></div>
     </section>
 
+    <div class="colsplit" id="splitR" title="Drag to resize the palette panel"></div>
+
     <!-- RIGHT: chunks / mod -->
     <aside id="right">
+      <div class="panel" id="palettePanel">
+        <div class="palbartop">
+          <h3 style="margin:0">Palette</h3>
+          <select id="palBarSel" title="Choose a palette"></select>
+          <button data-act="openPalette" class="ghostbtn palbarcog power-only" title="Open the palette manager — build / edit / save palettes (Power mode)">Edit</button>
+        </div>
+        <div id="palBarStrip"></div>
+        <button data-act="openGallery" class="ghostbtn" style="width:100%;margin-top:6px;font-size:12px">Browse all tiles &amp; enemies…</button>
+      </div>
       <div class="panel">
-        <h3>📅 Build a day's level</h3>
+        <h3>Build a day's level</h3>
         <div class="row">
           <select id="dateSel" style="flex:1"></select>
-          <button data-act="lockDate" title="Make the game ALWAYS load this day's level">🔒 Lock</button>
+          <button data-act="lockDate" title="Make the game ALWAYS load this day's level">Lock</button>
           <button data-act="playtestDay" class="accent" title="Build this day + install + play it on the emulator">▶ Play</button>
         </div>
         <div class="chk" id="dateInfo">load your game, then pick a January date</div>
-        <div class="row"><label style="flex:1">🎨 Theme
+        <div class="row"><label style="flex:1">Theme
           <select id="themeSel" title="Background atmosphere for this day (gameplay tiles render in every theme)"></select></label></div>
-        <div class="row"><button data-act="viewFullLevel" class="accent" style="flex:1" title="See the whole assembled day's level — every chunk stacked together (read-only)">👁 View whole level</button></div>
+        <div class="row"><button data-act="viewFullLevel" class="accent" style="flex:1" title="See the whole assembled day's level — every chunk stacked together (read-only)">View whole level</button></div>
         <div id="daySeq" class="dayseq"></div>
         <div class="chk">⠿ <b>drag a section to reorder</b> · ＋ add a section · double-click to edit · ⇄ swap · ✕ remove. Inserting pushes everything above it up — checkpoints included.</div>
         <div class="chk power-only">grey rows (checkpoint/start/end/special) are functional pieces — editable, but one edit changes every copy. "+extra" sections go past the level's native length — <b>experimental: they may not render; playtest to confirm</b>.</div>
@@ -209,7 +192,7 @@
           <button data-act="restoreDay" title="Fully restore this day to the original game level — clears ALL edits + reorder for this day (use if the day crashes or renders wrong)">⟲ Restore day (clear edits)</button></div>
       </div>
       <div class="panel power-only">
-        <h3>🧩 Custom sections</h3>
+        <h3>Custom sections</h3>
         <select id="libList" size="5"></select>
         <div class="row">
           <button data-act="newLibChunk">New</button>
@@ -220,22 +203,68 @@
         <div class="chk">from-scratch sections you author once and add (＋) into any day</div>
       </div>
       <div class="panel power-only">
-        <h3>Sections (browse all) <label class="chk"><input type="checkbox" id="activeOnly" checked> active season</label></h3>
-        <input id="chunkSearch" placeholder="filter (e.g. s17, blob, jk)…" style="width:100%;margin-bottom:5px">
-        <select id="chunkList" size="9"></select>
-        <div class="chk" id="chunkCount" style="margin-top:4px"></div>
-        <div class="row">
-          <button data-act="editChunk">Edit selected</button>
-          <button data-act="blankChunk">New blank</button>
-        </div>
-      </div>
-      <div class="panel power-only">
         <h3>Edited sections in this mod</h3>
         <select id="editedList" size="6"></select>
         <div class="row"><button data-act="removeLevel">Remove</button></div>
       </div>
     </aside>
   </main>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-box settings">
+      <div class="settingshead">
+        <h3>Settings</h3>
+        <span class="settingsnote">Changes are saved to the project · most need an on-device playtest</span>
+        <button data-act="closeSettings" class="ghostbtn">✕ Close</button>
+      </div>
+      <div class="settingsbody">
+
+        <section class="setgroup">
+          <h4>Build &amp; install</h4>
+          <label class="setrow" title="Rename the package (per-mod id from the project name) so the build installs as its OWN app, next to the stock Leap Day, instead of replacing it. Needs an on-device test."><input type="checkbox" id="clonePkg"/> <span>Install alongside original</span></label>
+        </section>
+
+        <section class="setgroup charsection">
+          <h4>Character</h4>
+          <div class="charblock" title="Force the player to always play as this character. Lick grants his grapple/tongue. Needs an on-device playtest.">
+            <div class="charlabel">Play as <span class="charcur" id="forceCharCur">— off —</span></div>
+            <div class="charpick" id="forceCharGrid"></div>
+            <select id="forceChar" hidden></select>
+          </div>
+          <label class="setrow" title="Permanent grappling hook from spawn on ANY character, no pickup needed (patches IsGrapplingHookActive). The mechanic works and you can grapple at will. Limitation: it draws as the bare pink line, not the animated metal-hook sprite — that metal animation only loads via the powerup's real activation, which a no-ads build can't reach."><input type="checkbox" id="grapplingHook"/> <span>Grappling hook (from spawn)</span></label>
+        </section>
+
+        <section class="setgroup">
+          <h4>Checkpoints</h4>
+          <label class="setrow" title="Pin every checkpoint to one mode. VIP auto = free auto-unlock (unlocks as you pass, no fruits, no ad). VIP fruit = the pay-fruits chest (set the cost below; 0 = free). Blank = game default. .so patch — needs an on-device playtest."><span>Checkpoint mode</span> <select id="cpMode"><option value="">default</option><option value="1">VIP auto (free)</option><option value="2">VIP fruit (pay)</option></select></label>
+          <label class="setrow" title="For VIP fruit mode: how many fruits EVERY checkpoint costs to unlock (stock 20; 0 = free). Changes the requirement, the amount deducted, AND the number on the sign so they match. Global; blank = game default. Range 0–4095. .so patch — needs an on-device playtest."><span>Checkpoint fruit cost</span> <input type="number" id="cpFruitCost" min="0" max="4095" placeholder="20" style="width:64px"/></label>
+          <label class="setrow power-only" title="Reskin every checkpoint chest as a raised FLAG and make it non-blocking (collider becomes a trigger, so you pass through). The real checkpoint trigger stays intact — best paired with VIP auto so you just walk past the flag. Global bundle edit; needs an on-device playtest."><input type="checkbox" id="flagCheckpoints"/> <span>Flag-style checkpoints</span></label>
+          <label class="setrow power-only" title="Respawn flags: every Respawn Flag you place (from the element palette) becomes a touch-to-save checkpoint at Playtest — walk into it to set your respawn (open→flap flag animation, chunk-relative respawn, no missile). Applied via the on-device cannon→checkpoint agent. Placing a flag turns this on automatically."><input type="checkbox" id="respawnFlags"/> <span>Respawn flags</span></label>
+        </section>
+
+        <!-- kept functional with their defaults, but no visible control -->
+        <input type="checkbox" id="enforceWidth" checked hidden>
+        <input type="number" id="spawnMult" hidden>
+
+        <section class="setgroup">
+          <h4>Camera <small>(applied at Playtest)</small></h4>
+          <label class="setrow" title="On sections wider than one screen (28/42 wide = 2–3 screens) the camera follows the player continuously instead of snapping between the fixed screen columns. Applied at Playtest via the on-device agent; single-screen (14-wide) sections keep the stock centred camera."><input type="checkbox" id="smoothCamera"/> <span>Smooth camera</span></label>
+          <label class="setrow" title="Lock the camera to each section's vertical frame on EVERY section (any width), so it never scrolls up/down into the neighbouring section. Short sections anchor to their bottom; taller sections follow the player but stay contained. Applied at Playtest via the on-device agent."><input type="checkbox" id="lockCameraY"/> <span>Lock camera Y</span></label>
+          <label class="setrow" title="Only affects lock camera Y. ON: the view is boxed inside the current section (caps top AND bottom). OFF: caps only the bottom (no dead space below) and leaves the top open, so you can see the section you're about to jump up into."><input type="checkbox" id="lockYCapTop"/> <span>Contain top</span></label>
+        </section>
+
+        <section class="setgroup wide">
+          <h4>Background &amp; playtest <small>(applied at Playtest)</small></h4>
+          <label class="setrow" title="Keep the music playing (no side-room muffle/fade) and drag the background along with the camera when you walk off the main column — for wide sections (28/42 wide = 2–3 screens). Applied at Playtest via the on-device agent; physics, camera and screen transitions stay stock."><input type="checkbox" id="keepMusicBg"/> <span>Keep music + background offscreen</span></label>
+          <label class="setrow" id="bgModeWrap" title="Background style on wide (28/42) sections. Full = copy the level's animated scenery (castle, candles, balloons…) onto every screen. Bare = strip the scenery on every screen (even the main one) so you just get the plain moon/stars sky."><span>Background</span> <select id="bgMode"><option value="full">full scenery</option><option value="bare">bare sky</option></select></label>
+          <label class="setrow" title="Baked into the BUILD (not playtest-only): on wide (>14) custom sections, fill the dead side columns — the ones with no gameplay — with brick, so their side screens read as solid wall instead of empty background. The play area is left untouched. Reversible: toggle off and rebuild."><input type="checkbox" id="brickDeadSides"/> <span>Brick dead side columns</span></label>
+          <label class="setrow" title="Hide the run timer (the 00:00 readout) during Playtest. On-device agent; visual only."><input type="checkbox" id="hideTimer"/> <span>Hide run timer</span></label>
+          <label class="setrow" title="Hide the progression bar (the checkpoint/progress line) during Playtest. On-device agent; visual only."><input type="checkbox" id="hideProgress"/> <span>Hide progress bar</span></label>
+        </section>
+
+      </div>
+    </div>
+  </div>
 
   <div id="logModal" class="modal hidden">
     <div class="modal-box">
@@ -254,10 +283,46 @@
           <button class="gtab" data-gtab="enemies">Enemies</button>
         </div>
         <input id="gallerySearch" placeholder="filter…">
-        <span class="ghint">click any item to grab it and start painting</span>
+        <span class="ghint" id="galleryHint">click any item to grab it and start painting</span>
+        <button id="rosterArrange" title="You can always drag a tile to move it. This button adds extras: multi-select, hide-from-users, and renaming the category groups.">✎ Extras</button>
+        <button id="rosterAddCluster" hidden title="Add a cluster divider">＋ Cluster</button>
+        <button id="rosterSaveLayout" class="accent" hidden>Save layout</button>
+        <button id="rosterResetLayout" hidden title="Clear the custom layout — back to category grouping">Reset</button>
         <button data-act="closeGallery">Close</button>
       </div>
       <div id="galleryGrid" class="gallerygrid"></div>
+    </div>
+  </div>
+
+  <div id="paletteModal" class="modal hidden">
+    <div class="modal-box palbox">
+      <div class="palhead">
+        <h3 style="margin:0">Palette</h3>
+        <select id="palSel" title="Choose a palette"></select>
+        <span class="ghint" id="palHint">click a block to grab it</span>
+        <span class="palspacer"></span>
+        <label class="paleditchk power-only" title="Edit this palette (dev — Power mode only)"><input type="checkbox" id="palEdit"> Edit</label>
+        <input id="palNameInput" hidden placeholder="palette name" style="width:130px;padding:3px">
+        <button id="palMoveUp" hidden title="Move this palette earlier in the list">◀</button>
+        <button id="palMoveDn" hidden title="Move this palette later in the list">▶</button>
+        <button id="palNew" hidden title="New empty palette">＋ New</button>
+        <button id="palDel" hidden title="Delete this palette">Delete</button>
+        <button id="palSave" class="accent" hidden>Save</button>
+        <button data-act="closePalette">Close</button>
+      </div>
+      <div class="palworkspace">
+        <div id="palEditBar" class="paleditbar" hidden>
+          <div class="paltools">
+            <button class="paltool active" data-paltool="paint" title="Fill: drag/click a tile in">Paint</button>
+            <button class="paltool" data-paltool="turn" title="Click a tile to rotate it 90°">Turn</button>
+            <button class="paltool" data-paltool="mark" title="Click a tile to stamp a direction arrow / spin dot (cycles)">Mark</button>
+          </div>
+          <input id="palSearch" placeholder="search tiles…">
+          <span class="ghint" id="palToolHint">drag a tile into a slot · right-click a slot to clear</span>
+          <div id="palSrc" class="palsrc"></div>
+        </div>
+        <div id="palGrid" class="palgrid"></div>
+      </div>
     </div>
   </div>
 

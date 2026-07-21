@@ -24,7 +24,13 @@
 #include <sys/mman.h>
 
 #define TAG "NATIVEMOD"
+#ifdef NATIVEMOD_DEBUG
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#else
+/* release: strip all logcat output; the `if (0)` keeps args referenced so
+ * variables used only inside LOG(...) don't warn, and the dead call is removed. */
+#define LOG(...) do { if (0) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__); } while (0)
+#endif
 
 /* ---- runtime tuning table -------------------------------------------------- *
  * The per-mod tuning table used to be baked into this .so at compile time (an old
@@ -63,11 +69,19 @@ typedef struct {
  * (col,row) — the 🟢 respawn end of a 🚩flag→🟢respawn connection line. */
 typedef struct { const char* chunk; int col, row; } RespawnLink;
 
+/* ghostR cell: a Ghost that spawned at chunk `chunk` cell (col,row) should fly
+ * LEFT-to-RIGHT. The editor places "ghostR"; the build emits it as the only
+ * game-spawnable ghost ("ghostL", leftToRight=0), and the native mod flips just
+ * these instances to leftToRight=1 so they move the other way. */
+typedef struct { const char* chunk; int col, row; } GhostRCell;
+
 #define MAX_TUNES 512
 #define MAX_BAKES 128
 #define MAX_RLINKS 64
+#define MAX_GRCELLS 64
 static EnemyTune   g_tunes[MAX_TUNES]; static int g_ntunes;
 static RespawnLink g_rlinks[MAX_RLINKS]; static int g_nrlinks;
+static GhostRCell  g_grcells[MAX_GRCELLS]; static int g_ngrcells;
 static ShootBake g_bakes[MAX_BAKES]; static int g_nbakes;
 
 /* axe spin+boomerang tunables (baked defaults; an "x|" config line overrides).
@@ -98,6 +112,18 @@ static char* cfg_field(char** sp) {
 static const char* cfg_orNull(const char* s) {
     return (s && s[0] == '-' && s[1] == 0) ? NULL : s;   /* "-" = none */
 }
+
+/* ---- playtest-feature flags (ported from the Frida musicbg agent) ---------
+ * Baked into the build so Build+Install matches Playtest. Gated by the same
+ * Settings toggles, serialized as one `p|...` config line. */
+static int g_pt_keep = 0;      /* keep music: no side-room muffle/fade + timer on side screens */
+static int g_pt_bgbare = 0;    /* bare background: strip theme scenery, keep the sky           */
+static int g_pt_smooth = 0;    /* smooth camera (phase 2)                                      */
+static int g_pt_locky  = 0;    /* lock camera Y  (phase 2)                                      */
+static int g_pt_captop = 1;    /* lock-Y: cap the top too (phase 2)                             */
+static int g_pt_hidet  = 0;    /* hide the run timer                                           */
+static int g_pt_hidep  = 0;    /* hide the progression bar                                     */
+static int g_pt_respawn = 0;   /* respawn flags (phase 3)                                      */
 /* parse the patched config blob into g_tunes[]/g_bakes[]. Byte-by-byte volatile
  * reads keep the optimizer from assuming the build-time (empty) contents. */
 static void load_config(void) {
@@ -159,6 +185,17 @@ static void load_config(void) {
                 rl->col = f_col ? atoi(f_col) : 0;
                 rl->row = atoi(f_row);
             }
+        } else if (line[0] == 'g' && line[1] == 'r' && line[2] == '|') {
+            /* ghostR cell: gr|chunk|col|rowFromBottom — flip this ghost to
+             * leftToRight=1 (fly the opposite way from a normal ghostL). */
+            char* r = line + 3;
+            char* f_chunk = cfg_field(&r); char* f_col = cfg_field(&r); char* f_row = cfg_field(&r);
+            if (f_chunk && f_row && g_ngrcells < MAX_GRCELLS) {
+                GhostRCell* gc = &g_grcells[g_ngrcells++];
+                gc->chunk = f_chunk;                      /* points into g_cfgtext (kept) */
+                gc->col = f_col ? atoi(f_col) : 0;
+                gc->row = atoi(f_row);
+            }
         } else if (line[0] == 'x' && line[1] == '|') {
             /* axe boomerang settings: x|range|speed|spin (blank field = keep default) */
             char* r = line + 2;
@@ -170,6 +207,23 @@ static void load_config(void) {
             if (f_hng && f_hng[0]) g_axe_hang  = (float)atof(f_hng);
             LOG("config: axe range=%.1f speed=%.1f spin=%.1f hang=%.2f",
                 (double)g_axe_range, (double)g_axe_speed, (double)g_axe_spin, (double)g_axe_hang);
+        } else if (line[0] == 'p' && line[1] == '|') {
+            /* playtest features (gated by their Settings toggles):
+             * p|keep|bgbare|smooth|locky|captop|hidetimer|hideprog|respawn */
+            char* r = line + 2;
+            char* a = cfg_field(&r); char* b = cfg_field(&r); char* c = cfg_field(&r);
+            char* d = cfg_field(&r); char* e = cfg_field(&r); char* f = cfg_field(&r);
+            char* g = cfg_field(&r); char* h = cfg_field(&r);
+            g_pt_keep   = a ? atoi(a) : 0;
+            g_pt_bgbare = b ? atoi(b) : 0;
+            g_pt_smooth = c ? atoi(c) : 0;
+            g_pt_locky  = d ? atoi(d) : 0;
+            g_pt_captop = e ? atoi(e) : 1;
+            g_pt_hidet  = f ? atoi(f) : 0;
+            g_pt_hidep  = g ? atoi(g) : 0;
+            g_pt_respawn = h ? atoi(h) : 0;
+            LOG("config: playtest keep=%d bgbare=%d smooth=%d locky=%d captop=%d hidet=%d hidep=%d respawn=%d",
+                g_pt_keep, g_pt_bgbare, g_pt_smooth, g_pt_locky, g_pt_captop, g_pt_hidet, g_pt_hidep, g_pt_respawn);
         }
         /* "v1" version line and anything else ignored */
     }
@@ -882,6 +936,14 @@ static void process_anim_jobs(void);  /* animator speed-up for animation-locked 
 static void pump_detect_axes(void);   /* detect+equip swapped-in axes, main-thread (below) */
 static void clear_projectiles_on_death(void); /* wipe fired projectiles on player death/respawn (below) */
 static void respawn_redirect_tick(void);      /* move a checkpoint's respawn Y onto the 🟢 respawn marker (below) */
+static void checkpoint_renumber_tick(void);   /* give every checkpoint chunk a correct sequential number (below) */
+static void strip_scenery_tick(void);         /* bare-background: hide theme scenery (below) */
+static void hide_hud_tick(void);              /* hide run timer / progress bar (below) */
+static void camera_tick(void);                /* smooth camera / lock camera Y / contain top (below) */
+static void clone_bg_tick(void);              /* wide-level scenery clone (below) */
+static void flag_anim_tick(void);             /* 🚩 respawn-flag reskin/animation (below) */
+static void auto_respawn_tick(void);          /* save spawn Y on any checkpoint hit; teleport there on death (below) */
+static void checkpoint_respawn_tick(void);    /* reposition the def table to the chests + drain unlockCheckpoint (below) */
 static void axe_motion_tick(void);    /* spin + boomerang for swapped-in axes (below)  */
 static void pump_detour(void* self, void* method) {
     if (g_pump_orig) g_pump_orig(self, method);
@@ -941,6 +1003,7 @@ static void enqueue_adopt(Il2CppObject* m, float dx, float dy) {   /* worker thr
  * change). Declared here so homing_reset() below can clear it. */
 #define MAXARMED 64
 static float g_armed[MAXARMED][2]; static int g_narmed;
+static int   g_flag_step[MAXARMED];   /* per-flag reskin animation step (raise->flap) */
 static void homing_reset(void) {
     pthread_mutex_lock(&g_jlock);
     g_njobs = 0; g_nadopted = 0;
@@ -1195,6 +1258,8 @@ static Il2CppObject* g_trace_m; static int g_trace_left;   /* prove one missile 
 #define CP_UNLOCK_OFF   0x04     /* bool   unlocked                           */
 #define HMC_FIREDIR_OFF 0x2C     /* Vector2 fireDir (x@0x2C, y@0x30)          */
 #define RESPAWN_BIAS    8000.0f  /* CHECKPOINT_DEF.height = worldY + 8000      */
+#define CP_RESPAWN_LIFT  80.0f   /* land 5 blocks above the chest (was 8; higher spawned inside a block) */
+#define RESPAWN_FLAG_DROP 80.0f  /* 🚩respawn_flags: land ~5 blocks below the flag so touch+fall still counts */
 static Il2CppClass*  g_hmcClass2;
 static Il2CppObject* g_hmcTypeObj;    /* boxed typeof(HomingMissileCannon)   */
 static Il2CppClass*  g_levelClass;
@@ -1213,6 +1278,13 @@ static int armed_flag(float x, float y) {
         if (dx*dx + dy*dy < 4.0f) return 1;
     }
     return 0;
+}
+static int armed_index(float x, float y) {   /* which armed slot a flag is in, or -1 */
+    for (int i = 0; i < g_narmed; i++) {
+        float dx = g_armed[i][0]-x, dy = g_armed[i][1]-y;
+        if (dx*dx + dy*dy < 4.0f) return i;
+    }
+    return -1;
 }
 /* the live Player (cached; re-found via FindObjectsOfTypeAll when dead/null) */
 static Il2CppObject* g_player;
@@ -1246,19 +1318,224 @@ static int player_worldY(float* out) {
 #define PLAYER_DYING_OFF     0x52D
 #define PLAYER_RESPAWNING_OFF 0x52E
 static void force_exact_respawn(void) {
-    if (g_nrlinks == 0) return;
+    if (g_nrlinks == 0 && !g_pt_respawn) return;
     Il2CppObject* pl = get_player(); if (!pl) return;
     if (!*(unsigned char*)((char*)pl + PLAYER_RESPAWNING_OFF)) return;  /* only during respawn */
     float p[3]; if (!obj_position(pl, p)) return;
-    const ChunkReg* cr = chunk_for_pos(p[1]); if (!cr) return;
-    for (int r = 0; r < g_nrlinks; r++) {
-        if (strcmp(g_rlinks[r].chunk, cr->name) != 0) continue;
-        float rx = cr->ox + (float)g_rlinks[r].col * 16.0f + 8.0f;
-        float ry = cr->oy + (float)g_rlinks[r].row * 16.0f + 8.0f;
-        obj_set_position(pl, rx, ry, p[2]);       /* exact 🟢 cell (X and Y) */
-        break;
+    /* LINK path: pin to the 🟢 respawn marker cell of the player's chunk. */
+    if (g_nrlinks > 0) {
+        const ChunkReg* cr = chunk_for_pos(p[1]);
+        if (cr) for (int r = 0; r < g_nrlinks; r++) {
+            if (strcmp(g_rlinks[r].chunk, cr->name) != 0) continue;
+            float rx = cr->ox + (float)g_rlinks[r].col * 16.0f + 8.0f;
+            float ry = cr->oy + (float)g_rlinks[r].row * 16.0f + 8.0f;
+            obj_set_position(pl, rx, ry, p[2]);   /* exact 🟢 cell (X and Y) */
+            return;
+        }
+    }
+    /* RESPAWN-FLAGS path: pin to the exact 🚩 flag we respawned at, instead of the
+     * game's lane-centred drop (which lands mid-chunk). The armed flag whose
+     * checkpoint height (flagY - drop) is nearest the player's respawn Y is ours. */
+    if (g_pt_respawn && g_narmed > 0) {
+        int best = -1; float bd = 96.0f;                      /* only match a nearby flag */
+        for (int i = 0; i < g_narmed; i++) {
+            float d = (g_armed[i][1] - RESPAWN_FLAG_DROP) - p[1];
+            if (d < 0) d = -d;
+            if (d < bd) { bd = d; best = i; }
+        }
+        if (best >= 0) obj_set_position(pl, g_armed[best][0], g_armed[best][1], p[2]);  /* exact flag X,Y */
     }
 }
+/* ---- automatic checkpoint respawn (no markers needed) -------------------- *
+ * Independent of TileMap.checkpointNum / the game's index machinery.  The game
+ * sets Level.currentCheckpointCounter the instant the player passes a checkpoint
+ * (regardless of its number).  We watch that field: whenever it changes to a new
+ * counter, the player just touched a checkpoint, so we snapshot the player's own
+ * world Y as the spawn point.  While the player is respawning we pin that Y so
+ * the game can never drop them back at the start.  Cleared on level change. */
+static Il2CppObject* g_levelInst;
+static Il2CppObject* g_levelInstType;
+static Il2CppObject* get_level(void) {
+    if (g_levelInst && unity_alive(g_levelInst)) return g_levelInst;
+    g_levelInst = NULL;
+    if (!g_levelClass) g_levelClass = find_class("", "Level");
+    if (!g_levelClass) return NULL;
+    if (!g_levelInstType) g_levelInstType = il2cpp_type_get_object(il2cpp_class_get_type(g_levelClass));
+    if (!g_levelInstType) return NULL;
+    void* args[1] = { g_levelInstType };
+    Il2CppArray* arr = find_all_locked(g_findAll, args);
+    if (!arr) return NULL;
+    uintptr_t len = *(uintptr_t*)((char*)arr + 0x18);
+    void** items  = (void**)((char*)arr + 0x20);
+    for (uintptr_t i = 0; i < len; i++) {
+        Il2CppObject* lv = (Il2CppObject*)items[i];
+        if (lv && unity_alive(lv)) { g_levelInst = lv; break; }
+    }
+    return g_levelInst;
+}
+/* ranked checkpoint counters, published by checkpoint_renumber_tick */
+struct CpItem { Il2CppObject* ctr; Il2CppObject* tm; float x, y; int rank; unsigned char armed; };
+static struct CpItem g_cplist[64]; static int g_ncplist;
+
+static Il2CppObject* g_ar_level;      /* Level instance the saved spawn belongs to */
+static float         g_ar_x;          /* saved spawn world-X (the chest's own X)      */
+static float         g_ar_y;          /* saved spawn world-Y                         */
+static int           g_ar_have;       /* a spawn has been saved this level           */
+static int           g_ar_rank;       /* highest checkpoint rank passed so far        */
+static long          g_ar_logged;
+static unsigned char g_cphit[64];     /* per-chest "already registered" flag (reset per level) */
+#define CC_DATASAVED_OFF 0xA8         /* CheckpointCounter.dataSaved — true only when TAKEN */
+
+/* the game's TRUE "checkpoint collected" edge: CheckpointSign.playerPassCheckpoint
+ * (+0x98) goes 0->1 when the player crosses the sign's checkpoint line. This is the
+ * real collect moment — NOT the counter/rosette position. */
+static Il2CppClass*  g_signClass;
+static Il2CppObject* g_signType;
+static void*         g_sign_seen[64];
+static unsigned char g_sign_pc[64];
+static int           g_n_sign_seen;
+#define SIGN_PASS_OFF 0x98
+/* the game's own "which checkpoint was last reached" static — flips the instant a
+ * checkpoint sequence starts, independent of position guessing. */
+static Il2CppClass*  g_ccClass;
+static FieldInfo*    g_fLastVisited;
+static int           g_lastVisited_prev = -0x7fffffff;
+/* Y half-window that counts as "in this checkpoint's height band".  Checkpoints
+ * sit ~one chunk apart, so keep it well under that to avoid arming the next one
+ * early; rank-advance-only makes ordering monotonic regardless. */
+#define AR_YBAND 180.0f
+static void auto_respawn_tick(void) {
+    if (!g_findAll) return;
+    Il2CppObject* pl = get_player(); if (!pl) return;
+    float p[3]; if (!obj_position(pl, p)) return;
+
+    Il2CppObject* lvl = get_level();
+    if (lvl != g_ar_level) {          /* new level: reset all per-level state */
+        g_ar_level = lvl; g_ar_have = 0; g_ar_rank = 0;
+        g_n_sign_seen = 0;
+        g_lastVisited_prev = -0x7fffffff;
+    }
+
+    /* GAME SIGNAL: CheckpointCounter.lastCheckpointVisited flips when a checkpoint
+     * sequence starts — the authoritative "chest reached" moment. */
+    if (!g_ccClass) g_ccClass = find_class("", "CheckpointCounter");
+    if (g_ccClass && !g_fLastVisited)
+        g_fLastVisited = il2cpp_class_get_field_from_name(g_ccClass, "lastCheckpointVisited");
+    if (g_fLastVisited) {
+        int lv = 0; il2cpp_field_static_get_value(g_fLastVisited, &lv);
+        if (lv != g_lastVisited_prev) {
+            LOG("CHECKPOINT SEQUENCE start: lastCheckpointVisited %d -> %d  (player y=%.0f)",
+                g_lastVisited_prev, lv, (double)p[1]);
+            g_lastVisited_prev = lv;
+        }
+    }
+
+#ifdef NATIVEMOD_DEBUG
+    /* MEASURE: dump every candidate collect-state per chest on change, so we can see
+     * which field flips at the exact moment a chest is actually collected. */
+    { static unsigned int prevsig[64];
+      for (int i = 0; i < g_ncplist; i++) {
+        Il2CppObject* c = g_cplist[i].ctr; if (!c || !unity_alive(c)) continue;
+        unsigned char b78 = *(unsigned char*)((char*)c + 0x78);   /* bronzeSharePoint */
+        unsigned char b79 = *(unsigned char*)((char*)c + 0x79);   /* silverSharePoint */
+        unsigned char bA8 = *(unsigned char*)((char*)c + 0xA8);   /* dataSaved        */
+        int  prize = *(int*)((char*)c + 0xAC);                    /* prize            */
+        unsigned char bB4 = *(unsigned char*)((char*)c + 0xB4);   /* initialised      */
+        unsigned int sig = b78 | (b79<<1) | (bA8<<2) | (bB4<<3) | ((unsigned)prize<<8);
+        if (sig != prevsig[i]) {
+            LOG("STATE chest#%d: shareB=%d shareS=%d dataSaved=%d init=%d prize=%d  playerY=%.0f dy=%.0f",
+                g_cplist[i].rank, b78, b79, bA8, bB4, prize, (double)p[1], (double)(p[1]-g_cplist[i].y));
+            prevsig[i] = sig;
+        }
+      } }
+#endif
+    unsigned char resp  = *(unsigned char*)((char*)pl + PLAYER_RESPAWNING_OFF);
+    unsigned char dying = *(unsigned char*)((char*)pl + PLAYER_DYING_OFF);
+#ifdef NATIVEMOD_DEBUG
+    { static unsigned char pd = 0, pr = 0;
+      if (dying != pd || resp != pr) {
+        LOG("DEATH FSM: dying=%d respawning=%d  playerY=%.0f  saved(y=%.0f have=%d)",
+            dying, resp, (double)p[1], (double)g_ar_y, g_ar_have);
+        pd = dying; pr = resp;
+      } }
+#endif
+    return;  /* DISABLED: rely on the game's native AUTO-mode respawn (mode patch) */
+    (void)resp; (void)dying;
+
+    /* teleport-on-death: while respawning, force the saved chest X and Y */
+    if (resp) {
+        if (g_ar_have) obj_set_position(pl, g_ar_x, g_ar_y, p[2]);
+        return;
+    }
+    if (dying) return;   /* don't record while dying */
+
+    /* REACHED — the game's real signal: CheckpointSign.playerPassCheckpoint (+0x98)
+     * flips 0->1 when the player passes that checkpoint's line (the only field that
+     * actually changes on reach — dataSaved never does for override chests). Register
+     * the nearest chest, respawn there. */
+    if (!g_signClass) { g_signClass = find_class("", "CheckpointSign");
+        if (g_signClass) g_signType = il2cpp_type_get_object(il2cpp_class_get_type(g_signClass)); }
+    if (g_signClass && g_signType && g_ncplist > 0) {
+        void* sa[1] = { g_signType };
+        Il2CppArray* sarr = find_all_locked(g_findAll, sa);
+        if (sarr) {
+            uintptr_t sn = *(uintptr_t*)((char*)sarr + 0x18);
+            void** sit   = (void**)((char*)sarr + 0x20);
+            for (uintptr_t j = 0; j < sn; j++) {
+                Il2CppObject* sg = (Il2CppObject*)sit[j];
+                if (!sg || !unity_alive(sg)) continue;
+                unsigned char pc = *(unsigned char*)((char*)sg + SIGN_PASS_OFF);
+                int idx = -1;
+                for (int k = 0; k < g_n_sign_seen; k++) if (g_sign_seen[k] == sg) { idx = k; break; }
+                if (idx < 0 && g_n_sign_seen < 64) { idx = g_n_sign_seen++; g_sign_seen[idx] = sg; g_sign_pc[idx] = pc; continue; }
+                if (idx < 0) continue;
+                if (pc == 1 && g_sign_pc[idx] == 0) {            /* rising edge = just passed it */
+                    float sp[3];
+                    if (obj_position(sg, sp)) {
+                        int bi = -1; float bd = 1e18f;
+                        for (int i = 0; i < g_ncplist; i++) {
+                            float ddx = g_cplist[i].x - sp[0], ddy = g_cplist[i].y - sp[1];
+                            float d = ddx*ddx + ddy*ddy;
+                            if (d < bd) { bd = d; bi = i; }
+                        }
+                        if (bi >= 0 && g_cplist[bi].rank > g_ar_rank) {
+                            g_ar_rank = g_cplist[bi].rank;
+                            g_ar_x = g_cplist[bi].x; g_ar_y = g_cplist[bi].y; g_ar_have = 1;
+                            if (!g_levelClass) g_levelClass = find_class("", "Level");
+                            if (g_levelClass && lvl && g_cplist[bi].tm) {
+                                if (!g_mAddCheckpoint)
+                                    g_mAddCheckpoint = il2cpp_class_get_method_from_name(g_levelClass, "AddCheckpoint", 3);
+                                if (g_mAddCheckpoint) {
+                                    float h = g_cplist[bi].y + RESPAWN_BIAS; unsigned char u = 1;
+                                    void* pr[3] = { &h, &u, g_cplist[bi].tm };
+                                    il2cpp_runtime_invoke(g_mAddCheckpoint, lvl, pr, NULL);
+                                }
+                            }
+                            LOG("REACHED: chest #%d (%.0f,%.0f) via sign(%.0f,%.0f) player y=%.0f",
+                                g_ar_rank, (double)g_cplist[bi].x, (double)g_cplist[bi].y,
+                                (double)sp[0], (double)sp[1], (double)p[1]);
+                        }
+                    }
+                }
+                g_sign_pc[idx] = pc;
+            }
+        }
+    }
+
+#ifdef NATIVEMOD_DEBUG
+    { static int hb = 0;
+      if ((++hb % 60) == 0) {
+        float best = 1e9f; int br = 0;
+        for (int i = 0; i < g_ncplist; i++) {
+            float d = p[1] - g_cplist[i].y; if (d < 0) d = -d;
+            if (d < best) { best = d; br = g_cplist[i].rank; }
+        }
+        LOG("auto_respawn hb: playerY=%.0f  nearest chest rank=%d dy=%.0f  saved(rank=%d y=%.0f have=%d)",
+            (double)p[1], br, (double)best, g_ar_rank, (double)g_ar_y, g_ar_have);
+      } }
+#endif
+}
+
 /* the TileMap component whose transform sits at chunk origin (ox,oy) — the tile
  * AddCheckpoint needs so Continue regenerates the right chunk on respawn. */
 static Il2CppObject* tilemap_for_origin(float ox, float oy) {
@@ -1290,7 +1567,7 @@ static void respawn_redirect_tick(void) {
     if (!g_fCheckpoints) g_fCheckpoints = il2cpp_class_get_field_from_name(g_levelClass, "checkpoints");
     if (!g_hmcTypeObj || !g_fCheckpoints) return;
 
-    if (g_nrlinks == 0) return;                          /* no flag→respawn connections baked */
+    if (g_nrlinks == 0 && !g_pt_respawn) return;         /* no flag links AND respawn_flags off */
 
     /* passivate flag/respawn marker cannons so they never shoot the player (best
      * effort by fireDir; if fireDir reads 0 at rest a marker may fire — harmless);
@@ -1305,29 +1582,41 @@ static void respawn_redirect_tick(void) {
         for (uintptr_t i = 0; i < len; i++) {
             Il2CppObject* c = (Il2CppObject*)items[i];
             if (!c || c == g_service_cannon || !unity_alive(c)) continue;
-            float fy = *(float*)((char*)c + HMC_FIREDIR_OFF + 4);   /* fireDir.y */
-            if (fy > 0.5f || fy < -0.5f)                            /* 🚩 flag / 🟢 respawn */
+            /* identify by GameObject name so REAL homing cannons keep firing:
+             * 🚩 flag = "homingcannonUp", 🟢 respawn marker = "homingcannonDown". */
+            Il2CppObject* go = invoke0(c, "get_gameObject"); if (!go) continue;
+            char gn[48]; obj_name(go, gn, sizeof gn);
+            int isFlag   = (strncmp(gn, "homingcannonUp", 14) == 0);
+            int isMarker = (strncmp(gn, "homingcannonDown", 16) == 0);
+            if (isFlag || isMarker)
                 *(unsigned char*)((char*)c + HMC_CANFIRE_OFF) = 0;  /* passive: never fire  */
-            if (!(fy > 0.5f) || !havePlayer || g_narmed >= MAXARMED) continue;  /* only 🚩 flags */
+            if (!isFlag || !havePlayer || g_narmed >= MAXARMED) continue;  /* only 🚩 flags arm */
             float p[3]; if (!obj_position(c, p)) continue;
+            if (p[0] == 0.0f && p[1] == 0.0f) continue;            /* skip the prefab template at origin */
             if (py < p[1] - 8.0f) continue;                        /* player not up to the flag yet */
             if (armed_flag(p[0], p[1])) continue;                  /* armed once (by position)       */
             const ChunkReg* cr = chunk_for_pos(p[1]); if (!cr) continue;
             int row = -1;
             for (int r = 0; r < g_nrlinks; r++)
                 if (strcmp(g_rlinks[r].chunk, cr->name) == 0) { row = g_rlinks[r].row; break; }
-            if (row < 0) continue;                                 /* flag has no 🟢 respawn link     */
+            /* respawn point: a 🟢-link cell if this flag has one, else (respawn_flags
+             * on) the flag's own height dropped a bit, so no 🟢 marker is needed. */
+            float respawnY;
+            if (row >= 0)          respawnY = cr->oy + (float)row * 16.0f + 8.0f;
+            else if (g_pt_respawn) respawnY = p[1] - RESPAWN_FLAG_DROP;
+            else continue;                                         /* no link, respawn_flags off */
             Il2CppObject* tm = tilemap_for_origin(cr->ox, cr->oy); if (!tm) continue;
             Il2CppObject* lvl = *(Il2CppObject**)((char*)tm + TM_LEVEL_OFF); if (!lvl) continue;
             if (!g_mAddCheckpoint)
                 g_mAddCheckpoint = il2cpp_class_get_method_from_name(g_levelClass, "AddCheckpoint", 3);
             if (!g_mAddCheckpoint) continue;
-            float h = cr->oy + (float)row * 16.0f + 8.0f + RESPAWN_BIAS;
+            float h = respawnY + RESPAWN_BIAS;
             unsigned char u = 1; void* pr[3] = { &h, &u, tm };
             il2cpp_runtime_invoke(g_mAddCheckpoint, lvl, pr, NULL);
+            g_flag_step[g_narmed] = 0;                          /* start the flag's raise animation */
             g_armed[g_narmed][0] = p[0]; g_armed[g_narmed][1] = p[1]; g_narmed++;
             LOG("flag: armed checkpoint chunk=%s respawnY=%.1f (player reached flag)",
-                cr->name, (double)(h - RESPAWN_BIAS));
+                cr->name, (double)respawnY);
         }
     }
 
@@ -1366,6 +1655,353 @@ static void respawn_redirect_tick(void) {
     }
 }
 
+/* ---- 🚩 respawn-flag reskin: draw the flag sprites on each flag cannon so it
+ * LOOKS like a flag (idle until touched, then raise -> flap loop). The cannon's
+ * own Update runs before the pump, so setting the sprite here (post) sticks. */
+static Il2CppObject* g_flag_idle, * g_flag_raise[9], * g_flag_flap[7];
+static int g_flag_ready;
+static Il2CppClass* g_srClass2; static Il2CppObject* g_srType;
+static const MethodInfo* g_mSetSprite, * g_mGoGetComp;
+static Il2CppObject* g_coll2dType; static const MethodInfo* g_mGetCompInCh, * g_mCollSetEn;
+static int load_flag_sprites(void) {
+    if (g_flag_ready) return 1;
+    Il2CppClass* sc = find_class("UnityEngine", "Sprite");
+    if (!sc || !resolve_findall()) return 0;
+    Il2CppObject* sty = il2cpp_type_get_object(il2cpp_class_get_type(sc));
+    void* a[1] = { sty };
+    Il2CppArray* arr = find_all_locked(g_findAll, a);
+    if (!arr) return 0;
+    uintptr_t n = *(uintptr_t*)((char*)arr + 0x18);
+    void** it = (void**)((char*)arr + 0x20);
+    for (uintptr_t i = 0; i < n; i++) {
+        Il2CppObject* s = (Il2CppObject*)it[i]; if (!s) continue;
+        char nm[48]; obj_name(s, nm, sizeof nm);
+        if (strncmp(nm, "flag_open-", 10) == 0) {
+            int idx = atoi(nm + 10);
+            if (idx == 2) g_flag_idle = s;
+            else if (idx >= 3 && idx <= 11) g_flag_raise[idx - 3] = s;
+        } else if (strncmp(nm, "flag_flap-", 10) == 0) {
+            int idx = atoi(nm + 10);
+            if (idx >= 1 && idx <= 7) g_flag_flap[idx - 1] = s;
+        }
+    }
+    int nr = 0, nf = 0;
+    for (int i = 0; i < 9; i++) if (g_flag_raise[i]) nr++;
+    for (int i = 0; i < 7; i++) if (g_flag_flap[i]) nf++;
+    if (g_flag_idle && nr == 9 && nf == 7) { g_flag_ready = 1; LOG("flag: sprites ready (idle + raise9 + flap7)"); return 1; }
+    return 0;
+}
+static Il2CppObject* flag_frame(int step) {   /* raise (0..8) then loop the flap */
+    if (step < 9) return g_flag_raise[step];
+    return g_flag_flap[(step - 9) % 7];
+}
+static void flag_anim_tick(void) {
+    if (!g_pt_respawn) return;
+    if (!g_flag_ready) {   /* scanning ALL sprites is costly — only retry occasionally until found */
+        static unsigned int tries;
+        if ((++tries & 31) != 0) return;
+        if (!load_flag_sprites()) return;
+    }
+    if (!g_hmcClass2) g_hmcClass2 = find_class("", "HomingMissileCannon");
+    if (!g_hmcClass2) return;
+    if (!g_hmcTypeObj) g_hmcTypeObj = il2cpp_type_get_object(il2cpp_class_get_type(g_hmcClass2));
+    if (!g_srClass2) g_srClass2 = find_class("UnityEngine", "SpriteRenderer");
+    if (!g_srClass2) return;
+    if (!g_srType) g_srType = il2cpp_type_get_object(il2cpp_class_get_type(g_srClass2));
+    if (!g_mSetSprite) g_mSetSprite = il2cpp_class_get_method_from_name(g_srClass2, "set_sprite", 1);
+    if (!g_mGoGetComp) { Il2CppClass* goc = find_class("UnityEngine", "GameObject");
+        if (goc) { g_mGoGetComp = il2cpp_class_get_method_from_name(goc, "GetComponent", 1);
+                   g_mGetCompInCh = il2cpp_class_get_method_from_name(goc, "GetComponentInChildren", 2); } }
+    if (!g_coll2dType) { Il2CppClass* cc = find_class("UnityEngine", "Collider2D");
+        if (cc) { g_coll2dType = il2cpp_type_get_object(il2cpp_class_get_type(cc));
+                  g_mCollSetEn = il2cpp_class_get_method_from_name(cc, "set_enabled", 1); } }
+    if (!g_mSetSprite || !g_mGoGetComp || !g_hmcTypeObj || !resolve_findall()) return;
+    static unsigned int animdiv;
+    int advance = ((++animdiv & 3) == 0);      /* advance the animation ~15fps */
+    void* a[1] = { g_hmcTypeObj };
+    Il2CppArray* arr = find_all_locked(g_findAll, a);
+    if (!arr) return;
+    uintptr_t len = *(uintptr_t*)((char*)arr + 0x18);
+    void** items  = (void**)((char*)arr + 0x20);
+    for (uintptr_t i = 0; i < len; i++) {
+        Il2CppObject* c = (Il2CppObject*)items[i];
+        if (!c || c == g_service_cannon || !unity_alive(c)) continue;
+        Il2CppObject* go = invoke0(c, "get_gameObject"); if (!go) continue;
+        char gn[48]; obj_name(go, gn, sizeof gn);
+        if (strncmp(gn, "homingcannonUp", 14) != 0) continue;  /* ONLY 🚩 flags — real homing cannons keep working */
+        float p[3]; if (!obj_position(c, p)) continue;
+        if (p[0] == 0.0f && p[1] == 0.0f) continue;            /* skip the prefab template at origin */
+        /* kill the flag's collider so it doesn't block/hurt the player */
+        if (g_coll2dType && g_mGetCompInCh && g_mCollSetEn) {
+            uint8_t inc = 1; void* cca[2] = { g_coll2dType, &inc };
+            Il2CppObject* coll = il2cpp_runtime_invoke(g_mGetCompInCh, go, cca, NULL);
+            if (coll) { uint8_t off = 0; void* ea[1] = { &off }; il2cpp_runtime_invoke(g_mCollSetEn, coll, ea, NULL); }
+        }
+        void* ga[1] = { g_srType };
+        Il2CppObject* sr = il2cpp_runtime_invoke(g_mGoGetComp, go, ga, NULL);
+        if (!sr) {
+#ifdef NATIVEMOD_DEBUG
+            { static int nosr = 0; if (nosr < 4) { nosr++; LOG("flag DIAG: no SpriteRenderer on cannon GO"); } }
+#endif
+            continue;
+        }
+        Il2CppObject* sprite = g_flag_idle;                    /* idle until touched */
+        int ai = armed_index(p[0], p[1]);
+        if (ai >= 0) { if (advance) g_flag_step[ai]++; sprite = flag_frame(g_flag_step[ai]); }
+        if (sprite) { void* sa[1] = { sprite }; il2cpp_runtime_invoke(g_mSetSprite, sr, sa, NULL); }
+    }
+}
+
+/* ---- checkpoint renumbering (main thread) --------------------------------- *
+ * BOTH the ribbon and the respawn-save read the SAME value: CheckpointCounter
+ * derives its cell, looks up the TileMap at that cell, and reads TileMap.check-
+ * pointNum (+0xCC).  (Update -> SetRosetteNumber draws it; PlayerPassCheckpoint
+ * -> CheckpointNumber() saves it for respawn.)  Edited / override checkpoints
+ * come through with checkpointNum = 0, so they draw "0" AND respawn at the level
+ * start.  The flagged (chunkNameContainsCheckpoint) TileMap is NOT the instance
+ * the counter's cell-lookup returns, which is why stamping the flagged one did
+ * nothing.  So: rank every CheckpointCounter by world Y (closest to spawn = #1)
+ * and stamp checkpointNum on the TileMap physically CLOSEST to each counter —
+ * i.e. the one its cell-lookup resolves to.  Fixes ribbon + respawn together.
+ * FindObjectsOfTypeAll + get_position are Unity calls -> main thread only. */
+static void checkpoint_renumber_tick(void) {
+    static Il2CppClass* ktm = NULL; static size_t o_num = (size_t)-1;
+    static Il2CppObject* tyTM = NULL;
+    static Il2CppClass* kcc = NULL; static Il2CppObject* tyCC = NULL;
+    static size_t o_cc_num = (size_t)-1, o_cc_init = (size_t)-1;
+    static int tried = 0, logged = 0;
+    if (!tried) {
+        tried = 1;
+        ktm = find_class("", "TileMap");
+        if (ktm) { o_num = field_off(ktm, "checkpointNum");
+                   tyTM = il2cpp_type_get_object(il2cpp_class_get_type(ktm)); }
+        kcc = find_class("", "CheckpointCounter");
+        if (kcc) { tyCC = il2cpp_type_get_object(il2cpp_class_get_type(kcc));
+                   o_cc_num  = field_off(kcc, "checkpointNumber");   /* holds 16 - drawnNum */
+                   o_cc_init = field_off(kcc, "initialised"); }      /* draw-once gate       */
+        LOG("checkpoint_renumber: TileMap=%p num@0x%zx CheckpointCounter=%p num@0x%zx init@0x%zx",
+            (void*)ktm, o_num, (void*)kcc, o_cc_num, o_cc_init);
+    }
+    if (!ktm || !tyTM || !kcc || !tyCC || o_num == (size_t)-1) return;
+    if (!resolve_findall()) return;
+
+    /* 1. every CheckpointCounter + its world position */
+    void* aCC[1] = { tyCC };
+    Il2CppArray* ac = find_all_locked(g_findAll, aCC);
+    if (!ac) return;
+    uintptr_t lc = *(uintptr_t*)((char*)ac + 0x18);
+    void** ic = (void**)((char*)ac + 0x20);
+    typedef struct { Il2CppObject* o; float p[3]; } cpc_t;
+    cpc_t cc[64]; int ncc = 0;
+    for (uintptr_t j = 0; j < lc && ncc < 64; j++) {
+        Il2CppObject* c = (Il2CppObject*)ic[j];
+        if (!c || !unity_alive(c)) continue;
+        float p[3]; if (!obj_position(c, p)) continue;
+        cc[ncc].o = c; cc[ncc].p[0] = p[0]; cc[ncc].p[1] = p[1]; cc[ncc].p[2] = p[2]; ncc++;
+    }
+    if (ncc == 0) return;
+
+    /* 2. every TileMap (snapshot the array once) */
+    void* aTM[1] = { tyTM };
+    Il2CppArray* at = find_all_locked(g_findAll, aTM);
+    if (!at) return;
+    uintptr_t lt = *(uintptr_t*)((char*)at + 0x18);
+    void** it = (void**)((char*)at + 0x20);
+
+    /* 3. for each counter, find its nearest TileMap; DROP strays — offscreen/UI
+     * counters whose nearest chunk is absurdly far are not real checkpoints. */
+    typedef struct { Il2CppObject* ctr; Il2CppObject* tm; float x, y; } CpMatch;
+    CpMatch v[64]; int nv = 0;
+    for (int a = 0; a < ncc && nv < 64; a++) {
+        Il2CppObject* best = NULL; float bd = 1e18f;
+        for (uintptr_t j = 0; j < lt; j++) {
+            Il2CppObject* tm = (Il2CppObject*)it[j];
+            if (!tm || !unity_alive(tm)) continue;
+            float q[3]; if (!obj_position(tm, q)) continue;
+            float dx = q[0] - cc[a].p[0], dy = q[1] - cc[a].p[1], dz = q[2] - cc[a].p[2];
+            float d = dx*dx + dy*dy + dz*dz;
+            if (d < bd) { bd = d; best = tm; }
+        }
+        if (!best || bd > 250000.0f) continue;      /* >500u from any chunk = not a real checkpoint */
+        v[nv].ctr = cc[a].o; v[nv].tm = best; v[nv].x = cc[a].p[0]; v[nv].y = cc[a].p[1]; nv++;
+    }
+    if (nv == 0) return;
+
+    /* sort ASCENDING by Y: rank 1 = lowest Y = bottom of the climb = reached first.
+     * (In this game the player climbs toward increasing Y; spawn is the lowest Y.) */
+    for (int a = 0; a < nv; a++)
+        for (int b = a + 1; b < nv; b++)
+            if (v[b].y < v[a].y) { CpMatch t = v[a]; v[a] = v[b]; v[b] = t; }
+
+    /* stamp each nearest TileMap with its shown number + publish the list for auto_respawn.
+     * The DRAWN number counts DOWN as you climb: bottom chest = nv (highest), top = 1.
+     * (rank stays 1..nv in climb order — it's the internal ordering key.) */
+    g_ncplist = nv;
+    for (int a = 0; a < nv; a++) {
+        int shown = nv - a;                                             /* bottom = highest */
+        *(int32_t*)((char*)v[a].tm + o_num) = shown;
+        g_cplist[a].ctr = v[a].ctr; g_cplist[a].tm = v[a].tm;
+        g_cplist[a].x = v[a].x; g_cplist[a].y = v[a].y; g_cplist[a].rank = a + 1;
+        /* the rosette draws ONCE (gated by 'initialised'); if it drew the stale value
+         * (checkpointNumber holds 16 - drawnNum), clear the gate so Update redraws it
+         * with the number we just stamped. self-limiting: stops once it matches. */
+        if (o_cc_num != (size_t)-1 && o_cc_init != (size_t)-1) {
+            int drawn_field = *(int32_t*)((char*)v[a].ctr + o_cc_num);   /* == 16 - drawnNum */
+            if (drawn_field != 16 - shown)
+                *(uint8_t*)((char*)v[a].ctr + o_cc_init) = 0;           /* force one redraw */
+        }
+    }
+    if (!logged) { logged = 1;
+        LOG("checkpoint_renumber: stamped %d checkpoint(s) %d..1 (bottom highest)", nv, nv);
+        for (int a = 0; a < nv; a++)
+            LOG("checkpoint_renumber:   chest rank%d shows #%d  x=%.1f  y=%.1f",
+                a + 1, nv - a, (double)v[a].x, (double)v[a].y);
+    }
+#ifdef NATIVEMOD_DEBUG
+    { static int dumped = 0;
+      if (!dumped) {
+        if (!g_levelClass) g_levelClass = find_class("", "Level");
+        if (g_levelClass && !g_fCheckpoints)
+            g_fCheckpoints = il2cpp_class_get_field_from_name(g_levelClass, "checkpoints");
+        if (g_fCheckpoints) {
+            Il2CppObject* list = NULL; il2cpp_field_static_get_value(g_fCheckpoints, &list);
+            if (list) {
+                Il2CppArray* ci = *(Il2CppArray**)((char*)list + 0x10);
+                int cs = *(int*)((char*)list + 0x18);
+                LOG("Level.checkpoints: size=%d", cs);
+                if (ci) { char* cd = (char*)ci + 0x20;
+                    for (int i = 0; i < cs && i < 20; i++) {
+                        char* e = cd + (size_t)i * CP_STRIDE;
+                        LOG("  Lcp[%d] worldY=%.1f unlocked=%d",
+                            i, (double)(*(float*)(e+CP_HEIGHT_OFF) - RESPAWN_BIAS),
+                            *(uint8_t*)(e+CP_UNLOCK_OFF)); } }
+                dumped = 1;
+            }
+        }
+      } }
+#endif
+}
+
+/* the game calls unlockCheckpoint(h) with a value that DOESN'T match the def table in
+ * an edited level, so its own unlock finds nothing. The hook (below) enqueues h here;
+ * this pump tick drains it, finds the real chest nearest that Y, and unlocks it. */
+#define UNLOCKQ 32
+static volatile float g_unlockq[UNLOCKQ];
+static volatile int   g_unlockq_head, g_unlockq_tail;
+
+/* ---- checkpoint respawn: fix the def table + hijack unlockCheckpoint ---------- *
+ * In an edited level the game's respawn table (Level.checkpoints) keys each entry's
+ * height off its CHUNK ORIGIN, and the game's own unlockCheckpoint(worldY) fails to
+ * match those entries, so nothing unlocks and death respawns at the start (MIN_Y_POS).
+ * We (1) point every entry at its real chest by matching CHECKPOINT_DEF.tilemap(0x8)
+ * to the chest's TileMap, and (2) drain the hooked unlockCheckpoint calls, unlocking
+ * the def of the chest nearest the passed Y ourselves. Main thread only. */
+static void checkpoint_respawn_tick(void) {
+    if (g_unlockq_tail == g_unlockq_head) return;   /* nothing passed since last tick */
+    if (g_ncplist == 0 || !g_findAll) return;
+    if (!g_levelClass) g_levelClass = find_class("", "Level");
+    if (!g_levelClass) return;
+    if (!g_fCheckpoints)  g_fCheckpoints  = il2cpp_class_get_field_from_name(g_levelClass, "checkpoints");
+    if (!g_mAddCheckpoint) g_mAddCheckpoint = il2cpp_class_get_method_from_name(g_levelClass, "AddCheckpoint", 3);
+    if (!g_fCheckpoints || !g_mAddCheckpoint) return;
+    Il2CppObject* lvl = get_level();
+    if (!lvl) return;
+
+    /* drain the game's unlockCheckpoint(h) events. h ≈ the passed chest's world-Y, but
+     * the existing def table has no entry there, so the game's own unlock finds nothing.
+     * We ADD an unlocked entry at the real chest (height = chestY + BIAS) — respawn then
+     * lands at chestY (= height - BIAS). Deduped: unlock/skip if one already exists. */
+    while (g_unlockq_tail != g_unlockq_head) {
+        float h = g_unlockq[g_unlockq_tail & (UNLOCKQ-1)]; g_unlockq_tail++;
+        int best = -1; float bd = 1e18f;
+        for (int c = 0; c < g_ncplist; c++) {
+            float d = g_cplist[c].y - h; if (d < 0) d = -d;
+            if (d < bd) { bd = d; best = c; }
+        }
+        if (best < 0) continue;
+        float want = g_cplist[best].y + CP_RESPAWN_LIFT + RESPAWN_BIAS;
+
+        /* re-read the list each time (AddCheckpoint may reallocate _items) */
+        Il2CppObject* list = NULL; il2cpp_field_static_get_value(g_fCheckpoints, &list);
+        Il2CppArray* items = list ? *(Il2CppArray**)((char*)list + 0x10) : NULL;
+        int size = list ? *(int*)((char*)list + 0x18) : 0;
+        char* data = items ? (char*)items + 0x20 : NULL;
+
+        int done = 0;
+        for (int i = 0; data && i < size; i++) {
+            char* e = data + (size_t)i * CP_STRIDE;
+            float hh = *(float*)(e + CP_HEIGHT_OFF);
+            if (hh > want - 2.0f && hh < want + 2.0f) {      /* already have this entry */
+                *(unsigned char*)(e + CP_UNLOCK_OFF) = 1; done = 1; break;
+            }
+        }
+        if (done) {
+            LOG("checkpoint_respawn: re-unlocked chest rank=%d worldY=%.0f",
+                g_cplist[best].rank, (double)g_cplist[best].y);
+            continue;
+        }
+        unsigned char u = 1; void* pr[3] = { &want, &u, g_cplist[best].tm };
+        il2cpp_runtime_invoke(g_mAddCheckpoint, lvl, pr, NULL);   /* add unlocked def at the chest */
+        LOG("checkpoint_respawn: ADDED respawn at chest rank=%d worldY=%.0f (unlockCheckpoint h=%.0f)",
+            g_cplist[best].rank, (double)g_cplist[best].y, (double)h);
+    }
+}
+
+/* ---- ghostR direction flip -------------------------------------------------
+ * The game can only spawn "ghostL" (leftToRight=0); a placed "ghostR" is emitted
+ * as ghostL (so it spawns at all) and listed by cell in g_grcells. Ghost.Start()
+ * LATCHES the ghost's direction from leftToRight@0x71 once at spawn (FixedUpdate
+ * only reads it afterward for edge checks), so we must set it BEFORE Start runs.
+ * We inline-hook Ghost.Start: the detour matches the fresh ghost to its spawn
+ * cell and flips it to leftToRight=1, then calls the original. */
+#define GHOST_LEFTTORIGHT_OFF 0x71
+static Il2CppClass* g_ghostClass;
+static int gr_iabs(int v){ return v < 0 ? -v : v; }
+static int ghost_cell(Il2CppObject* g, char* base, int cap, int* col, int* row){
+    float ew[3]; if(!obj_position(g, ew)) return 0;
+    const ChunkReg* cr = chunk_for_pos(ew[1]);
+    if(!cr) return 0;
+    strncpy(base, cr->name, cap - 1); base[cap - 1] = 0;
+    *col = (int)lroundf((ew[0] - cr->ox - 8.0f) / 16.0f);
+    *row = (int)lroundf((ew[1] - cr->oy - 8.0f) / 16.0f);
+    return 1;
+}
+typedef void (*ghost_start_fn)(void*, void*);
+static ghost_start_fn g_ghost_start_orig;
+static void ghost_start_detour(void* self, void* method){
+    /* Runs on the main thread just before the game's Start reads leftToRight. */
+    if(self && g_ngrcells > 0){
+        build_chunk_registry();          /* fresh chunk origins for this frame's scroll */
+        char base[80]; int col, row;
+        if(ghost_cell((Il2CppObject*)self, base, sizeof base, &col, &row)){
+            for(int c = 0; c < g_ngrcells; c++){
+                GhostRCell* gc = &g_grcells[c];
+                if(strcmp(gc->chunk, base) == 0 && gr_iabs(row - gc->row) <= 1 && gr_iabs(col - gc->col) <= 2){
+                    *(uint8_t*)((char*)self + GHOST_LEFTTORIGHT_OFF) = 1;
+                    LOG("ghostR: Start hook -> leftToRight=1 at %s (%d,%d)", base, col, row);
+                    break;
+                }
+            }
+        }
+    }
+    if(g_ghost_start_orig) g_ghost_start_orig(self, method);
+}
+static void ghost_start_hook_install(void){
+    if(g_ghost_start_orig || g_ngrcells == 0) return;   /* nothing to flip -> skip */
+    if(!g_ghostClass) g_ghostClass = find_class("", "Ghost");
+    if(!g_ghostClass){ LOG("ghostR hook: no Ghost class"); return; }
+    const MethodInfo* m = il2cpp_class_get_method_from_name(g_ghostClass, "Start", 0);
+    if(!m){ LOG("ghostR hook: no Ghost.Start method"); return; }
+    void* code = *(void**)m;
+    if(!code){ LOG("ghostR hook: null code ptr"); return; }
+    if(g_il_lo && ((uintptr_t)code < g_il_lo || (uintptr_t)code >= g_il_hi)){
+        LOG("ghostR hook: code %p out of il2cpp range", code); return; }
+    if(!hook_prologue_safe((uint32_t*)code)){ LOG("ghostR hook: unhookable prologue @%p", code); return; }
+    g_ghost_start_orig = (ghost_start_fn)install_inline_hook(code, (void*)ghost_start_detour);
+    LOG("ghostR hook: Ghost.Start @%p -> %s (%d cell(s))", code,
+        g_ghost_start_orig ? "INSTALLED" : "FAILED", g_ngrcells);
+}
+
 static void main_thread_tick(void) {
     long n = ++g_pump_calls;
     if (n == 1)        LOG("pump: FIRST fire — running on the main thread");
@@ -1386,7 +2022,15 @@ static void main_thread_tick(void) {
     clear_projectiles_on_death();      /* wipe piled-up fired projectiles on death/respawn */
     if (n % 150 == 0) build_chunk_registry();   /* chunk map (main thread); static per section */
     if (n % 8 == 0) respawn_redirect_tick();    /* checkpoint hit -> respawn at the 🟢 marker in that chunk */
+    if (n % 20 == 0) checkpoint_renumber_tick(); /* give every checkpoint chunk a correct sequential number */
+    if (n % 30 == 0) strip_scenery_tick();       /* bare-background: hide theme scenery, keep the sky */
+    if (n % 30 == 0) clone_bg_tick();            /* wide-level: clone scenery onto the side screens */
+    if (n % 15 == 0) hide_hud_tick();            /* hide the run timer / progression bar */
+    camera_tick();                               /* smooth camera / lock camera Y / contain top (every frame) */
+    flag_anim_tick();                            /* 🚩 respawn-flag look: draw flag sprites every frame */
+    if (n % 4 == 0)  checkpoint_respawn_tick();  /* point the respawn table at the chests + unlock on pass */
     force_exact_respawn();                       /* pin the player to the exact 🟢 cell while respawning (every frame) */
+    auto_respawn_tick();                          /* save spawn Y on any checkpoint hit; teleport there on death */
     process_vel_jobs();   /* scale fieldless-shooter projectiles (independent of homing) */
     process_anim_jobs();  /* speed up animation-locked throwers so they machine-gun       */
     if ((g_pump_calls & 1) == 0) defeat_shoot_cooldowns();  /* trunky (EnemyAnimShooting) fire rate */
@@ -2036,8 +2680,417 @@ static void pump_install(void) {
     LOG("pump: %s", g_pump_orig ? "HOOK INSTALLED" : "HOOK FAILED");
 }
 
+/* ---- hijack Level.unlockCheckpoint: the game's checkpoint-REGISTRATION point --- *
+ * void Level.unlockCheckpoint(float height) flips the matching CHECKPOINT_DEF's
+ * unlocked=true — i.e. "this checkpoint is now a live respawn target". It's the exact
+ * moment the game registers a checkpoint. Instance method: (this=x0, height=s0, mi=x1). */
+typedef void (*unlockcp_fn)(void*, float, void*);
+static unlockcp_fn g_unlockcp_orig;
+static void unlockcp_detour(void* self, float h, void* method) {
+    if (g_unlockcp_orig) g_unlockcp_orig(self, h, method);   /* let the game try its own unlock */
+    int hd = g_unlockq_head; g_unlockq[hd & (UNLOCKQ-1)] = h; g_unlockq_head = hd + 1;
+    LOG("unlockCheckpoint HOOK: h=%.1f (enqueued)", (double)h);
+}
+static void checkpoint_hook_install(void) {
+    if (!g_levelClass) g_levelClass = find_class("", "Level");
+    if (!g_levelClass) { LOG("cp hook: no Level class"); return; }
+    const MethodInfo* m = il2cpp_class_get_method_from_name(g_levelClass, "unlockCheckpoint", 1);
+    if (!m) { LOG("cp hook: no unlockCheckpoint method"); return; }
+    void* code = *(void**)m;
+    if (!code) { LOG("cp hook: null code ptr"); return; }
+    if (g_il_lo && ((uintptr_t)code < g_il_lo || (uintptr_t)code >= g_il_hi)) {
+        LOG("cp hook: code %p out of il2cpp range", code); return; }
+    if (!hook_prologue_safe((uint32_t*)code)) { LOG("cp hook: unhookable prologue @%p", code); return; }
+    g_unlockcp_orig = (unlockcp_fn)install_inline_hook(code, (void*)unlockcp_detour);
+    LOG("cp hook: unlockCheckpoint @%p -> %s", code, g_unlockcp_orig ? "INSTALLED" : "FAILED");
+}
+
 
 /* ---- main loop ----------------------------------------------------------- */
+/* ======================================================================== *
+ *  Playtest features ported native — PHASE 1: keep-music, hide HUD, bare bg *
+ *  (each gated by its Settings toggle via the p| config flags.)             *
+ * ======================================================================== */
+
+/* pure no-op by direct entry patch: overwrite the method's first instruction
+ * with RET (or `movz w0,#1; ret` for a bool method). No trampoline is built, so
+ * it works on ANY prologue — we never run the original. (The inline hook can't
+ * relocate adrp/branch prologues, which most of these methods have.) */
+static void pt_patch_ret(const char* cls, const char* method, int argc, int ret_true) {
+    Il2CppClass* k = find_class("", cls);
+    if (!k) { LOG("pt: no class %s", cls); return; }
+    const MethodInfo* m = il2cpp_class_get_method_from_name(k, method, argc);
+    if (!m) { LOG("pt: no method %s.%s/%d", cls, method, argc); return; }
+    void* code = *(void**)m;
+    if (!code) { LOG("pt: null code %s.%s", cls, method); return; }
+    if (g_il_lo && ((uintptr_t)code < g_il_lo || (uintptr_t)code >= g_il_hi)) {
+        LOG("pt: %s.%s code %p out of il2cpp range", cls, method, code); return; }
+    uint32_t ins[2]; int len;
+    if (ret_true) { ins[0] = 0x52800020; ins[1] = 0xD65F03C0; len = 8; }  /* movz w0,#1 ; ret */
+    else          { ins[0] = 0xD65F03C0;                     len = 4; }   /* ret */
+    int mode = make_writable(code, len);
+    if (!mode) { LOG("pt: %s.%s not writable (W^X)", cls, method); return; }
+    memcpy(code, ins, (size_t)len);
+    __builtin___clear_cache((char*)code, (char*)code + len);
+    if (mode == 2) restore_exec(code, len);
+    LOG("pt: %s.%s -> RET patched (mode=%d)", cls, method, mode);
+}
+
+/* SetActive(false) on a GameObject. */
+static void pt_setactive_false(Il2CppObject* go) {
+    if (!go) return;
+    const MethodInfo* m = il2cpp_class_get_method_from_name(il2cpp_object_get_class(go), "SetActive", 1);
+    if (!m) return;
+    unsigned char v = 0; void* args[1] = { &v };
+    il2cpp_runtime_invoke(m, go, args, NULL);
+}
+/* unbox a boxed int returned by il2cpp_runtime_invoke (payload at +0x10). */
+static int pt_unbox_int(Il2CppObject* boxed) { return boxed ? *(int*)((char*)boxed + 0x10) : 0; }
+
+/* --- hide HUD by enumeration (no hook — InitProgressionBar has an unhookable
+ * prologue). Each throttled pump tick, find every SpeedrunCanvas and deactivate
+ * its timer GameObject (timerGO@0x50) and/or progression line (lineParent@0xD0)
+ * + player marker (playerProgression@0xD8). Idempotent; the game re-inits the
+ * bar per level, so re-hiding each tick keeps it hidden. */
+static Il2CppClass* g_scClass; static Il2CppObject* g_scType;
+static size_t o_sc_timerGO = (size_t)-1;
+/* every progression marker on the bar: the line, the player dot, start/end
+ * points, the medal/save markers, AND the two lists (checkpoint flags live in
+ * checkpointsProgression). Hiding all of these clears the whole bar. */
+static const char* PROG_FIELDS[] = {
+    "lineParent", "playerProgression", "startProgression", "endProgression",
+    "bronzeProgression", "silverProgression", "saveProgression",
+    "startPointProgression", "endPointProgression", 0 };
+static const char* PROG_LISTS[] = { "checkpointsProgression", "allPointsProgression", 0 };
+static size_t o_prog_field[16]; static size_t o_prog_list[4]; static int g_prog_resolved;
+/* hide every RectTransform in a List<RectTransform> (its GameObject). */
+static void pt_hide_rect_list(Il2CppObject* list) {
+    if (!list) return;
+    Il2CppArray* items = *(Il2CppArray**)((char*)list + 0x10);   /* List._items */
+    int sz = *(int*)((char*)list + 0x18);                        /* List._size  */
+    if (!items) return;
+    Il2CppObject** data = (Il2CppObject**)((char*)items + 0x20);
+    for (int i = 0; i < sz; i++)
+        if (data[i]) pt_setactive_false(invoke0(data[i], "get_gameObject"));
+}
+static void hide_hud_tick(void) {
+    if (!(g_pt_hidet || g_pt_hidep)) return;
+    if (!g_scClass) {
+        g_scClass = find_class("", "SpeedrunCanvas");
+        if (g_scClass) g_scType = il2cpp_type_get_object(il2cpp_class_get_type(g_scClass));
+    }
+    if (!g_scClass || !g_scType || !resolve_findall()) return;
+    if (!g_prog_resolved) {
+        g_prog_resolved = 1;
+        o_sc_timerGO = field_off(g_scClass, "timerGO");
+        for (int i = 0; PROG_FIELDS[i]; i++) o_prog_field[i] = field_off(g_scClass, PROG_FIELDS[i]);
+        for (int i = 0; PROG_LISTS[i];  i++) o_prog_list[i]  = field_off(g_scClass, PROG_LISTS[i]);
+        LOG("pt hud: SpeedrunCanvas resolved (timer@0x%zx)", o_sc_timerGO);
+    }
+    void* a[1] = { g_scType };
+    Il2CppArray* arr = find_all_locked(g_findAll, a);
+    if (!arr) return;
+    uintptr_t ln = *(uintptr_t*)((char*)arr + 0x18);
+    void** it = (void**)((char*)arr + 0x20);
+    for (uintptr_t j = 0; j < ln; j++) {
+        Il2CppObject* sc = (Il2CppObject*)it[j];
+        if (!sc || !unity_alive(sc)) continue;
+        if (g_pt_hidet && o_sc_timerGO != (size_t)-1)
+            pt_setactive_false(*(Il2CppObject**)((char*)sc + o_sc_timerGO));
+        if (g_pt_hidep) {
+            for (int i = 0; PROG_FIELDS[i]; i++) {
+                if (o_prog_field[i] == (size_t)-1) continue;
+                Il2CppObject* rt = *(Il2CppObject**)((char*)sc + o_prog_field[i]);
+                if (rt) pt_setactive_false(invoke0(rt, "get_gameObject"));
+            }
+            for (int i = 0; PROG_LISTS[i]; i++)
+                if (o_prog_list[i] != (size_t)-1)
+                    pt_hide_rect_list(*(Il2CppObject**)((char*)sc + o_prog_list[i]));
+        }
+    }
+}
+
+/* --- bare background: deactivate the theme scenery under the (static)
+ * Level.backgroundsContainer, keeping the sky roots + any sky-named child.
+ * Runs throttled from the pump (main thread). Idempotent. */
+static int pt_name_is_sky(const char* n) {
+    static const char* KW[] = {"sky","moon","star","night","space","backdrop","gradient","galaxy","aurora",0};
+    char low[64]; int i = 0;
+    for (; n[i] && i < 63; i++) { char c = n[i]; low[i] = (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+    low[i] = 0;
+    for (int k = 0; KW[k]; k++) if (strstr(low, KW[k])) return 1;
+    return 0;
+}
+static Il2CppClass* g_bgLevelClass; static FieldInfo* g_bgContainerField;
+static void strip_scenery_tick(void) {
+    if (!g_pt_bgbare) return;
+    if (!get_level()) return;                              /* not in a level yet */
+    if (!g_bgLevelClass) g_bgLevelClass = find_class("", "Level");
+    if (!g_bgLevelClass) return;
+    if (!g_bgContainerField)
+        g_bgContainerField = il2cpp_class_get_field_from_name(g_bgLevelClass, "backgroundsContainer");
+    if (!g_bgContainerField) return;
+    Il2CppObject* cont = NULL; il2cpp_field_static_get_value(g_bgContainerField, &cont);
+    if (!cont) return;
+    Il2CppObject* ctf = invoke0(cont, "get_transform");
+    if (!ctf) return;
+    const MethodInfo* gc = il2cpp_class_get_method_from_name(il2cpp_object_get_class(ctf), "GetChild", 1);
+    if (!gc) return;
+    int n = pt_unbox_int(invoke0(ctf, "get_childCount"));
+    for (int r = 0; r < n; r++) {
+        int idx = r; void* a[1] = { &idx };
+        Il2CppObject* rootT = il2cpp_runtime_invoke(gc, ctf, a, NULL);
+        if (!rootT) continue;
+        int cn = pt_unbox_int(invoke0(rootT, "get_childCount"));
+        for (int i = 0; i < cn; i++) {
+            int ci = i; void* ca[1] = { &ci };
+            Il2CppObject* childT = il2cpp_runtime_invoke(gc, rootT, ca, NULL);
+            if (!childT) continue;
+            Il2CppObject* childGO = invoke0(childT, "get_gameObject");
+            if (!childGO) continue;
+            char nm[64]; obj_name(childGO, nm, sizeof nm);
+            if (!pt_name_is_sky(nm)) pt_setactive_false(childGO);
+        }
+    }
+}
+
+/* ======================================================================== *
+ *  PHASE 2: camera trio — smooth camera / lock camera Y / contain top       *
+ *  Ported from the agent's FixedUpdate/CheckForSideRooms clamp, run in the   *
+ *  pump each frame (GameCamera methods are unhookable; the pump is a fine    *
+ *  last-writer). Offsets from the dump: GameCamera rightEdge@0x40 targetX@   *
+ *  0x54 followSpeed@0x88; Level.chunks@0x230 (List<TileMap>); TileMap        *
+ *  width@0x38 height@0x3C.                                                   *
+ * ======================================================================== */
+#define CAM_TILE_PX  16.0f
+#define CAM_Y_EASE   0.40f   /* how fast the Y correction catches up (higher = snappier) */
+#define CAM_LOOKAHEAD 48.0f  /* show 3 blocks of the NEXT chunk past the top cap */
+static Il2CppClass* g_gcClass; static Il2CppObject* g_gcType;
+static Il2CppClass* g_camClass;                    /* UnityEngine.Camera */
+static const MethodInfo* g_getMain; static const MethodInfo* g_getOrtho;
+static const MethodInfo* g_mChunkIdx;              /* Level.ChunkIndexAtY(float) */
+static float g_orthoHalf;                          /* main camera half view height */
+static int   g_cam_yeng; static float g_cam_smoothY;
+
+/* chunk band [bottom,top] + width for chunk index i of Level.chunks (List<TileMap>).
+ * `special` (optional) = 1 for a checkpoint / end / bonus (non-gameplay) chunk —
+ * the camera should NOT box to those (they're short and make it lag). */
+static int cam_chunk_at(Il2CppObject* chunks, int n, int i, float* bottom, float* top,
+                        int* width, int* special) {
+    if (i < 0 || i >= n) return 0;
+    Il2CppArray* items = *(Il2CppArray**)((char*)chunks + 0x10);   /* List._items */
+    if (!items) return 0;
+    Il2CppObject* tm = ((Il2CppObject**)((char*)items + 0x20))[i];
+    if (!tm || !unity_alive(tm)) return 0;
+    int h = *(int*)((char*)tm + 0x3C);      /* TileMap.height */
+    float p[3]; if (!obj_position(tm, p)) return 0;
+    *bottom = p[1];
+    *top    = p[1] + (float)h * CAM_TILE_PX;
+    *width  = *(int*)((char*)tm + 0x38);    /* TileMap.width  */
+    if (special) {
+        int cp = *(unsigned char*)((char*)tm + 0x68);   /* chunkNameContainsCheckpoint */
+        int ec = *(unsigned char*)((char*)tm + 0xD4);   /* endChunk                    */
+        int br = *(int*)((char*)tm + 0xE0);             /* bonusRoomType (0 = none)    */
+        *special = cp || ec || (br != 0);
+    }
+    return 1;
+}
+
+static void camera_tick(void) {
+    if (!(g_pt_smooth || g_pt_locky)) return;
+    if (!g_gcClass) {
+        g_gcClass = find_class("", "GameCamera");
+        if (g_gcClass) g_gcType = il2cpp_type_get_object(il2cpp_class_get_type(g_gcClass));
+    }
+    if (!g_gcClass || !g_gcType || !resolve_findall()) return;
+    /* NEVER fight the death/respawn camera: the game centres the screen on death
+     * and the death->respawn sequence waits for that centre to settle. Moving
+     * the camera here stalls it (~15s timeout). Hold off while dying/respawning. */
+    { Il2CppObject* pl = get_player();
+      if (pl && (*(unsigned char*)((char*)pl + PLAYER_RESPAWNING_OFF) ||
+                 *(unsigned char*)((char*)pl + PLAYER_DYING_OFF))) { g_cam_yeng = 0; return; } }
+    if (!g_levelClass) g_levelClass = find_class("", "Level");
+    if (!g_levelClass) return;
+    if (!g_mChunkIdx) g_mChunkIdx = il2cpp_class_get_method_from_name(g_levelClass, "ChunkIndexAtY", 1);
+    if (!g_mChunkIdx) return;
+
+    /* the single live GameCamera */
+    void* a[1] = { g_gcType };
+    Il2CppArray* arr = find_all_locked(g_findAll, a);
+    if (!arr) return;
+    uintptr_t ln = *(uintptr_t*)((char*)arr + 0x18);
+    void** it = (void**)((char*)arr + 0x20);
+    Il2CppObject* cam = NULL;
+    for (uintptr_t j = 0; j < ln; j++) {
+        Il2CppObject* c = (Il2CppObject*)it[j];
+        if (c && unity_alive(c)) { cam = c; break; }
+    }
+    if (!cam) return;
+
+    float re = *(float*)((char*)cam + 0x40);       /* rightEdge (one screen ~224) */
+    if (re <= 0.0f) return;
+    Il2CppObject* ft = invoke0(cam, "GetFollowTransform");
+    if (!ft) return;
+    float fp[3]; if (!obj_position(ft, fp)) return;
+    float px = fp[0], py = fp[1];
+
+    Il2CppObject* lvl = get_level();
+    if (!lvl) return;
+    Il2CppObject* chunks = *(Il2CppObject**)((char*)lvl + 0x230);   /* Level.chunks */
+    if (!chunks) return;
+    int nchunks = *(int*)((char*)chunks + 0x18);                    /* List._size */
+    if (nchunks <= 0) return;
+    float yy = py; void* ia[1] = { &yy };
+    int idx = pt_unbox_int(il2cpp_runtime_invoke(g_mChunkIdx, lvl, ia, NULL));
+
+    float curBot, curTop; int curW, curSpecial = 0;
+    if (!cam_chunk_at(chunks, nchunks, idx, &curBot, &curTop, &curW, &curSpecial)) { g_cam_yeng = 0; return; }
+    int screens = (curW + 13) / 14; if (screens < 1) screens = 1;   /* ceil(w/14) */
+
+    /* smooth X: set targetX; the game lerps toward it (keeps its own easing) */
+    if (g_pt_smooth) {
+        float half = re * 0.5f, hiX = (screens - 0.5f) * re;
+        float tx = (screens <= 1) ? half : (px < half ? half : (px > hiX ? hiX : px));
+        *(float*)((char*)cam + 0x54) = tx;         /* targetX */
+    }
+
+    /* Y clamp needs the main camera's ortho half-height (cached) */
+    if (g_orthoHalf <= 0.0f) {
+        if (!g_camClass) g_camClass = find_class("UnityEngine", "Camera");
+        if (g_camClass) {
+            if (!g_getMain)  g_getMain  = il2cpp_class_get_method_from_name(g_camClass, "get_main", 0);
+            Il2CppObject* mc = g_getMain ? il2cpp_runtime_invoke(g_getMain, NULL, NULL, NULL) : NULL;
+            if (mc) {
+                if (!g_getOrtho) g_getOrtho = il2cpp_class_get_method_from_name(g_camClass, "get_orthographicSize", 0);
+                Il2CppObject* ob = g_getOrtho ? il2cpp_runtime_invoke(g_getOrtho, mc, NULL, NULL) : NULL;
+                if (ob) g_orthoHalf = *(float*)((char*)ob + 0x10);
+            }
+        }
+    }
+    if (g_orthoHalf <= 0.0f) { g_cam_yeng = 0; return; }
+
+    float cpos[3]; if (!obj_position(cam, cpos)) { g_cam_yeng = 0; return; }
+    float camY = cpos[1];
+    /* Drive the camera from OUR own smoothed Y (not the game's follow, which
+     * snaps on jumps). Keep the player OUT of the upper half: put the camera
+     * centre ABOVE the player so they sit ~35% up from the bottom (well into the
+     * lower half, so you see where you're climbing to), and follow UP as they
+     * climb. Never scroll back down (dead zone below) — a climbing game. */
+    float refY      = g_cam_yeng ? g_cam_smoothY : camY;   /* our camera Y (view centre) */
+    float anchorOff = g_orthoHalf * 0.30f;                 /* camera sits this far above the player */
+    float want      = py + anchorOff;                      /* centre that puts the player low */
+    float dead      = (want > refY) ? want : refY;         /* follow up, else hold */
+    int engage = 0; float target = 0.0f;
+    if (curSpecial) {
+        /* checkpoint / end / bonus chunk — DON'T box the camera to it (they're
+         * short and make the view lag). Just follow the player smoothly. */
+        engage = 1; target = dead;
+    } else if (g_pt_locky) {
+        /* frame the current chunk: always cap the bottom; CAP_TOP caps the top but
+         * still shows CAM_LOOKAHEAD (3 blocks) of the next chunk above. */
+        float lo = curBot + g_orthoHalf;
+        float hi = g_pt_captop ? (curTop - g_orthoHalf + CAM_LOOKAHEAD) : 1e30f;
+        engage = 1;
+        target = (lo > hi) ? lo : (dead < lo ? lo : (dead > hi ? hi : dead));
+    } else if (screens > 1) {
+        /* smooth-camera: only guard the side view from a NARROWER vertical neighbour. */
+        float bB, bT, aB, aT; int bW, aW;
+        int hasBelow = cam_chunk_at(chunks, nchunks, idx - 1, &bB, &bT, &bW, 0);
+        int hasAbove = cam_chunk_at(chunks, nchunks, idx + 1, &aB, &aT, &aW, 0);
+        float lo = -1e30f, hi = 1e30f;
+        if (hasBelow && bW < curW) lo = curBot + g_orthoHalf;
+        if (hasAbove && aW < curW) hi = curTop - g_orthoHalf;
+        int offCentre = (px < 0.0f || px > re);
+        if (lo > hi) { engage = 1; target = lo; }
+        else if (offCentre && (lo != -1e30f || hi != 1e30f)) {
+            engage = 1; target = (dead < lo ? lo : (dead > hi ? hi : dead));
+        }
+    }
+    if (!engage) { g_cam_yeng = 0; return; }
+    if (!g_cam_yeng) g_cam_smoothY = camY;         /* seed from live Y -> smooth entry */
+    float fs = *(float*)((char*)cam + 0x88);       /* followSpeed */
+    float ease = (fs > 0.0f && fs <= 1.0f) ? fs : CAM_Y_EASE;
+    g_cam_smoothY += (target - g_cam_smoothY) * ease;
+    g_cam_yeng = 1;
+    float d = g_cam_smoothY - camY; if (d < 0.0f) d = -d;
+    if (d > 0.01f) obj_set_position(cam, cpos[0], g_cam_smoothY, cpos[2]);
+}
+
+/* --- wide-level background clone (keep-music+bg): copy the level's animated
+ * scenery onto the side screens of a wide (28/42) level so they aren't bare.
+ * Object.Instantiate each scenery root x3 at screen offsets, once per level.
+ * (Narrow levels have no side screens, so the copies just sit offscreen.) */
+static Il2CppObject* g_bg_cloned_lvl;   /* level whose scenery we've already cloned */
+static int g_bg_settle;
+static Il2CppClass* g_bgObjClass; static const MethodInfo* g_bgInstantiate, * g_bgSetParent;
+static void clone_bg_tick(void) {
+    if (!g_pt_keep || g_pt_bgbare) return;          /* only keep-bg, and not bare mode */
+    Il2CppObject* lvl = get_level();
+    if (!lvl) { g_bg_settle = 0; return; }
+    if (lvl == g_bg_cloned_lvl) return;             /* already cloned this level */
+    if (!g_bgLevelClass) g_bgLevelClass = find_class("", "Level");
+    if (!g_bgLevelClass) return;
+    if (!g_bgContainerField)
+        g_bgContainerField = il2cpp_class_get_field_from_name(g_bgLevelClass, "backgroundsContainer");
+    if (!g_bgContainerField) return;
+    Il2CppObject* cont = NULL; il2cpp_field_static_get_value(g_bgContainerField, &cont);
+    if (!cont) { g_bg_settle = 0; return; }
+    Il2CppObject* ctf = invoke0(cont, "get_transform");
+    if (!ctf) return;
+    const MethodInfo* gc = il2cpp_class_get_method_from_name(il2cpp_object_get_class(ctf), "GetChild", 1);
+    if (!gc) return;
+    int n = pt_unbox_int(invoke0(ctf, "get_childCount"));
+    if (n <= 0) { g_bg_settle = 0; return; }
+    if (++g_bg_settle < 3) return;                  /* let the scenery settle before Instantiate */
+    /* snapshot the ORIGINAL roots before adding any clones */
+    Il2CppObject* roots[32]; int nr = 0;
+    for (int i = 0; i < n && nr < 32; i++) {
+        int ci = i; void* a[1] = { &ci };
+        Il2CppObject* childT = il2cpp_runtime_invoke(gc, ctf, a, NULL);
+        if (!childT) continue;
+        Il2CppObject* go = invoke0(childT, "get_gameObject");
+        if (go) roots[nr++] = go;
+    }
+    if (!g_bgObjClass) g_bgObjClass = find_class("UnityEngine", "Object");
+    if (g_bgObjClass && !g_bgInstantiate) g_bgInstantiate = il2cpp_class_get_method_from_name(g_bgObjClass, "Instantiate", 1);
+    if (!g_bgSetParent) g_bgSetParent = il2cpp_class_get_method_from_name(il2cpp_object_get_class(ctf), "set_parent", 1);
+    if (!g_bgInstantiate || !g_bgSetParent) return;
+    int offs[3] = { -224, 224, 448 };               /* one screen = 224px */
+    int made = 0;
+    for (int r = 0; r < nr; r++) {
+        float opos[3]; if (!obj_position(roots[r], opos)) continue;
+        for (int k = 0; k < 3; k++) {
+            void* ia[1] = { roots[r] };
+            Il2CppObject* clone = il2cpp_runtime_invoke(g_bgInstantiate, NULL, ia, NULL);
+            if (!clone) continue;
+            Il2CppObject* clt = invoke0(clone, "get_transform");
+            if (clt) { void* pa[1] = { ctf }; il2cpp_runtime_invoke(g_bgSetParent, clt, pa, NULL); }
+            obj_set_position(clone, opos[0] + (float)offs[k], opos[1], opos[2]);
+            made++;
+        }
+    }
+    g_bg_cloned_lvl = lvl;
+    LOG("clone_bg: %d scenery copies on side screens", made);
+}
+
+/* install the phase-1 hooks (from the worker). Keep-music = RET-patch the
+ * muffle/fade methods; hide-HUD + bare-bg run per-tick in the pump. */
+static void playtest_hooks_install(void) {
+    if (g_pt_keep) {
+        pt_patch_ret("SoundManager", "tweenLowPass", 2, 0);
+        pt_patch_ret("SoundManager", "tweenMusicVolume", 2, 0);
+        pt_patch_ret("SoundManager", "stopMusic", 0, 0);
+        pt_patch_ret("SoundManager", "fadeOutMusicToTarget", 1, 0);
+        pt_patch_ret("SoundManager", "IsPositionOnSoundRange", 1, 1);  /* -> always true */
+        /* NOTE: do NOT no-op GameCamera.ExitScreenCenter — it fires
+         * onExitCenterScreenEvent, which the death->respawn flow waits on.
+         * No-opping it stalls respawn ~15s (the event timeout). The muffle is
+         * already killed by the SoundManager patches above. */
+    }
+    LOG("playtest hooks installed (keep=%d hidet=%d hidep=%d bgbare=%d)",
+        g_pt_keep, g_pt_hidet, g_pt_hidep, g_pt_bgbare);
+}
+
 static void* worker(void* _) {
     /* il2cpp_domain_get() faults before il2cpp_init; wait out the init window. */
     usleep(6 * 1000 * 1000);
@@ -2065,11 +3118,14 @@ static void* worker(void* _) {
     animspeed_init();
     firerate_init();
     /* the pump is the ONLY safe place for scene-touching Unity calls — needed by
-     * homing adoption, the velocity scaler, the axe spin/boomerang AND the animator
-     * speed-up, so install it if any of them wants it. */
-    if (g_want_homing || g_want_velscale || g_want_axeboom || g_want_animspeed || g_want_firerate) pump_install();
+     * homing adoption, the velocity scaler, the axe spin/boomerang, the animator
+     * speed-up AND the checkpoint renumber/respawn work, so always install it. */
+    pump_install();
+    checkpoint_hook_install();   /* hijack Level.unlockCheckpoint (the registration point) */
+    ghost_start_hook_install();  /* placed ghostR -> set leftToRight=1 before Ghost.Start latches direction */
+    playtest_hooks_install();    /* baked playtest features: keep-music / hide-HUD / bare-bg */
     LOG("ready: %d tuning record(s) across %d class(es)", g_ntunes, NTC);
-    if (g_ntunes == 0) return NULL;   /* nothing to do */
+    if (g_ntunes == 0) return NULL;   /* no tuning; checkpoint work runs in the pump/hook */
 
     char base[80];
     for (long tick = 0; ; tick++) {
