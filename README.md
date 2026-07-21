@@ -23,7 +23,26 @@ You need the exact game file **`leap-day-1-142-2.xapk`**. The patches target tha
 specific version, so a different build won't work. Supply your own copy (it isn't,
 and can't legally be, included here).
 
-## Install
+## Download (Windows and macOS)
+
+The easy way. Grab a ready-to-run build from the
+[Releases page](https://github.com/applesaus88/Leap-Day-Editor/releases) — no
+Python, no Java, no NDK to install.
+
+- Windows: download `LeapDayModStudio.exe` and double-click it. The first launch
+  may show a blue "Windows protected your PC" box (unknown publisher) — click
+  **More info → Run anyway**.
+- macOS: download `LeapDayModStudio-macos.zip`, unzip it, and move
+  `LeapDayModStudio.app` to Applications. The first launch is blocked because it's
+  unsigned — **right-click the app → Open**, then confirm. After that it opens
+  normally.
+
+Builds go to a `LeapDayModStudio` folder in your home directory, not inside the
+app, so nothing gets locked up.
+
+Linux users (and anyone who'd rather run the source) — see Install below.
+
+## Install (run from source)
 
 You need Python 3.10 or newer. Then:
 
@@ -146,6 +165,22 @@ If something goes wrong:
   after fast tapping, close and reopen it.
 - Very slow on Intel/AMD: that's expected. Use it for quick checks, or install on a
   real phone instead.
+
+## Building a standalone yourself
+
+The Windows/macOS downloads are built automatically by GitHub Actions
+(`.github/workflows/build-editor.yml`) whenever a `v*` tag is pushed. To make one
+locally instead:
+
+```
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm studio/editor.spec
+```
+
+The result lands in `dist/` — `LeapDayModStudio.app` on macOS, a single
+`LeapDayModStudio.exe` on Windows. PyInstaller only builds for the OS you run it
+on. Java isn't bundled in a local build (CI adds it), so APK signing still needs
+Java installed when you run a hand-built copy.
 
 ## What you can edit
 
