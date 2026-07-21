@@ -155,3 +155,9 @@ patcher/ standalone patcher app (Tkinter) + PyInstaller spec
 tiles/   catalog.json, the tile/enemy palette scraped from the game
 vendor/  uber-apk-signer.jar
 ```
+
+## AI disclosure
+
+Claude has been used to debug code. 95% of the code is written by a human. Claude
+did help a lot with writing/translating the documentation and the comments since
+English isn't my first language.
