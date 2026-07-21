@@ -58,6 +58,15 @@ that, rebuild the prebuilt with:
 python3 core/native/build_prebuilt.py <game.xapk>
 ```
 
+## Disk space
+
+The clone itself is tiny, about 4 MB. But a build unpacks the game and makes several
+working copies, so the folder balloons while it runs — figure 500–650 MB for one
+build's scratch and output. Plan for roughly **2 GB free** to edit and build
+comfortably (clone + Python deps ~150 MB + your game file ~150 MB + build scratch).
+The desktop emulator, if you use it, adds another 10–15 GB; a phone needs none of
+that.
+
 ## Run it
 
 ```
