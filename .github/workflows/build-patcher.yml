@@ -7,6 +7,12 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+    tags: [ "v*" ]
+
+# the tag build attaches the patcher to the GitHub Release, which needs write
+# access to repository contents (the default token is read-only).
+permissions:
+  contents: write
 
 jobs:
   windows-exe:
@@ -54,6 +60,12 @@ jobs:
           path: dist/LeapDayModPatcher.exe
           if-no-files-found: error
 
+      - name: Attach to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LeapDayModPatcher.exe
+
   macos-app:
     runs-on: macos-14          # Apple Silicon (arm64)
     steps:
@@ -99,3 +111,9 @@ jobs:
           name: LeapDayModPatcher-macos
           path: dist/LeapDayModPatcher-macos.zip
           if-no-files-found: error
+
+      - name: Attach to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LeapDayModPatcher-macos.zip
