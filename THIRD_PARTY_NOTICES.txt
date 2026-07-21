@@ -1,0 +1,94 @@
+LEAP DAY EDITOR — THIRD-PARTY NOTICES
+=====================================
+
+This file accompanies the downloadable builds (the Windows .exe and the macOS
+.app / .zip). Those builds bundle a Python runtime, a Java runtime, and the
+third-party components listed below so end users need nothing pre-installed.
+
+Leap Day Editor itself is licensed under the MIT License (see LICENSE). It ships
+NO Leap Day game code or assets — "Leap Day" is © Nitrome Ltd. This tool is
+unofficial and is not affiliated with, authorized, or endorsed by Nitrome. See
+NOTICE.md for the copyright / "bring your own game" model.
+
+The components below are the property of their respective authors and are
+included under their own licenses. Full license texts are available at the
+linked project pages.
+
+--------------------------------------------------------------------------------
+Eclipse Temurin (OpenJDK) — Java runtime
+  Bundled: yes, in the release builds (used only to run the APK signer).
+  License: GNU General Public License v2.0 WITH the Classpath Exception (GPLv2+CE)
+  Source & license: https://adoptium.net  /  https://openjdk.org
+  Note: the Classpath Exception permits linking/distribution alongside code under
+  other licenses. Corresponding source for the exact JDK build is available from
+  Adoptium/OpenJDK at the URLs above.
+
+uber-apk-signer  (vendor/uber-apk-signer.jar)
+  Author: Patrick Favre-Bulle
+  License: Apache License 2.0
+  Source: https://github.com/patrickfav/uber-apk-signer
+  Use: signs the rebuilt APK splits.
+
+UnityPy
+  License: MIT
+  Source: https://github.com/K0lb3/UnityPy
+  Use: read/write the game's text-level chunks and decode sprite textures.
+
+Pillow (PIL fork)
+  License: MIT-CMU / HPND
+  Source: https://github.com/python-pillow/Pillow
+  Use: image handling for sprite previews.
+
+pywebview
+  License: BSD 3-Clause
+  Source: https://github.com/r0x0r/pywebview
+  Use: the desktop window / native webview shell.
+
+TypeTreeGeneratorAPI (bundles Capstone, BSD-3-Clause)
+  License: MIT (TypeTreeGeneratorAPI); Capstone is BSD-3-Clause
+  Source: https://github.com/K0lb3/TypeTreeGenerator , https://www.capstone-engine.org
+  Use: read-only type-tree generation to locate sprites held in script fields.
+
+texture2ddecoder
+  License: MIT
+  Source: https://github.com/K0lb3/texture2ddecoder
+  Use: decode compressed Unity textures.
+
+etcpak
+  License: BSD 3-Clause
+  Source: https://github.com/wolfpld/etcpak
+  Use: ETC texture (de)compression, via UnityPy.
+
+astc-encoder-py (Arm ASTC Encoder)
+  License: Apache License 2.0
+  Source: https://github.com/ARM-software/astc-encoder
+  Use: ASTC texture decoding, via UnityPy.
+
+NumPy
+  License: BSD 3-Clause
+  Source: https://numpy.org
+  Use: array operations for texture decoding.
+
+LIEF
+  License: Apache License 2.0
+  Source: https://lief.re
+  Use: ELF handling for the native library's libmain patch (build-time).
+
+Brotli / lz4
+  Licenses: MIT (Brotli) / BSD (lz4)
+  Sources: https://github.com/google/brotli , https://github.com/python-lz4/python-lz4
+  Use: bundle (de)compression, via UnityPy.
+
+FMOD Engine (libfmod, via fmod_toolkit / pyfmodex)
+  License: PROPRIETARY — © Firelight Technologies Pty Ltd. Subject to the FMOD
+  End User License Agreement: https://www.fmod.com/legal
+  Source of the wrapper: https://github.com/K0lb3/fmod_toolkit
+  Note: this library is pulled in transitively by UnityPy's audio converter and
+  is bundled only so that module imports succeed. Leap Day Editor does NOT decode
+  or use audio. Redistribution and use are governed by the FMOD EULA above.
+
+--------------------------------------------------------------------------------
+PyInstaller is used only as the build tool to produce the executables; it is not
+redistributed as part of the running application.
+
+If you believe a component is mis-attributed or missing, please open an issue.

@@ -24,15 +24,14 @@ IS_MAC = sys.platform == "darwin"
 datas, binaries, hiddenimports = [], [], []
 
 # third-party packages that carry their own data / native libs.
-# fmod_toolkit + pyfmodex: UnityPy's export/__init__ imports its AudioClipConverter
-# unconditionally, which dlopen()s libfmod. We never decode audio, but the import
-# must not crash — if libfmod is missing, reading ANY texture raises and every
-# sprite comes back blank. So the FMOD native lib has to be in the bundle.
+# NOTE on FMOD: UnityPy's export/__init__ imports AudioClipConverter, whose only
+# module-level need is `import fmod_toolkit` (proprietary FMOD). We never decode
+# audio, so instead of bundling FMOD we stub that import via a runtime hook
+# (rthook_no_fmod.py) and exclude fmod_toolkit/pyfmodex below — no FMOD binary ships.
 # archspec: astc_encoder calls archspec.cpu.host() at import time, which reads a
 # bundled JSON (microarchitectures.json). Without its data files that read fails
 # and, again, texture decoding dies -> blank sprites.
-for pkg in ("UnityPy", "webview", "PIL", "TypeTreeGeneratorAPI",
-            "fmod_toolkit", "pyfmodex", "archspec",
+for pkg in ("UnityPy", "webview", "PIL", "TypeTreeGeneratorAPI", "archspec",
             "texture2ddecoder", "etcpak", "astc_encoder"):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hiddenimports += h
@@ -47,6 +46,12 @@ hiddenimports += [
 
 # the signer jar (Apache-2.0) — required to sign built APKs
 datas += [(os.path.join(ROOT, "vendor", "uber-apk-signer.jar"), "vendor")]
+
+# third-party license notices must accompany the distributed binary (GPL JRE,
+# Apache signer, etc.) — bundle at the app root so it ships with every download
+_notices = os.path.join(ROOT, "THIRD_PARTY_NOTICES.txt")
+if os.path.exists(_notices):
+    datas += [(_notices, ".")]
 
 # read-only resource trees, placed at the same relative paths app.py expects
 trees = [
@@ -83,6 +88,9 @@ EXCLUDES = [
     "IPython", "notebook", "jupyter", "jupyter_core",
     "PyQt5", "PyQt6", "PySide2", "PySide6",
     "tkinter", "pytest",
+    # proprietary FMOD, pulled in by UnityPy's audio converter but never used —
+    # stubbed at runtime (rthook_no_fmod.py) so nothing proprietary is shipped.
+    "fmod_toolkit", "pyfmodex",
 ]
 
 a = Analysis(
@@ -92,7 +100,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=[],
+    runtime_hooks=[os.path.join(ROOT, "studio", "rthook_no_fmod.py")],
     excludes=EXCLUDES,
     noarchive=False,
 )

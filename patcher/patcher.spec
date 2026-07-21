@@ -21,6 +21,12 @@ hiddenimports += ["core.bundle", "core.chunkfmt",
                   "core.apkbuild", "core.modbuild", "core.project"]
 datas += [(os.path.join(ROOT, "vendor", "uber-apk-signer.jar"), "vendor")]
 
+# third-party license notices must accompany the distributed binary (GPL JRE,
+# Apache signer, etc.) — bundle at the app root so it ships with every download
+_notices = os.path.join(ROOT, "THIRD_PARTY_NOTICES.txt")
+if os.path.exists(_notices):
+    datas += [(_notices, ".")]
+
 # optional bundled JRE (CI drops a trimmed runtime at ./jre before building) so
 # the user needs no Java install. Omitted from source/mac test builds.
 tree_extra = []
