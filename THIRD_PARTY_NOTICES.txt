@@ -79,14 +79,6 @@ Brotli / lz4
   Sources: https://github.com/google/brotli , https://github.com/python-lz4/python-lz4
   Use: bundle (de)compression, via UnityPy.
 
-FMOD Engine (libfmod, via fmod_toolkit / pyfmodex)
-  License: PROPRIETARY — © Firelight Technologies Pty Ltd. Subject to the FMOD
-  End User License Agreement: https://www.fmod.com/legal
-  Source of the wrapper: https://github.com/K0lb3/fmod_toolkit
-  Note: this library is pulled in transitively by UnityPy's audio converter and
-  is bundled only so that module imports succeed. Leap Day Editor does NOT decode
-  or use audio. Redistribution and use are governed by the FMOD EULA above.
-
 --------------------------------------------------------------------------------
 PyInstaller is used only as the build tool to produce the executables; it is not
 redistributed as part of the running application.

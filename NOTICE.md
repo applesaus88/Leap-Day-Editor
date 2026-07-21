@@ -31,9 +31,15 @@ extracted `data.unity3d` / `libil2cpp.so` / `global-metadata.dat` / `*.apk` /
 ## The native library / libmain patch
 The repo ships a prebuilt native library (`core/native/prebuilt/libnativemod-*.so`,
 original code, MIT) and a **libmain diff** (`libmain_needed-*.bin`). The `.bin` is a
-**pure delta** — a list of byte spans to add a `DT_NEEDED` entry so the game loads
-the native library. It does **not** embed Nitrome's original `libmain.so` bytes; it
-is applied at build time to the user's own copy of the game.
+binary diff that adds a single `DT_NEEDED` entry so the game loads the native
+library; it is applied at build time to the user's own copy of the game.
+
+Adding that entry rebuilds the ELF, so the diff includes a small amount (~2.7 KB)
+of relocated bytes from `libmain.so` — **Unity's generic Android loader stub**
+(© Unity Technologies), the same ~7 KB bootstrap present in every Unity game, which
+only `dlopen`s the engine. The diff contains **no** `libil2cpp.so` (the game's
+actual code), **no** game assets, levels, art, or audio, and none of Nitrome's
+game-specific content.
 
 ## Bundled / used third-party components
 The downloadable builds bundle a Python runtime, a Java runtime, and several
@@ -48,9 +54,6 @@ ships inside every release build. Key items:
 - **UnityPy** (MIT) — reads/writes the game's text level chunks and decodes sprites.
 - **Pillow** (HPND), **pywebview** (BSD-3), **TypeTreeGeneratorAPI** (MIT, bundles
   Capstone BSD-3), **NumPy** (BSD-3), **LIEF** (Apache-2.0), texture decoders.
-- **FMOD Engine** — proprietary (© Firelight Technologies), pulled in transitively
-  by UnityPy's audio path and bundled only so imports succeed; this tool does not
-  use audio. Subject to the FMOD EULA (https://www.fmod.com/legal).
 
 `core/axml.py` is an original implementation (no third-party code) based on the
 public AOSP `ResourceTypes.h` binary-XML format.
