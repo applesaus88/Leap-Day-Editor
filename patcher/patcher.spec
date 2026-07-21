@@ -27,6 +27,23 @@ tree_extra = []
 if os.path.isdir(os.path.join(ROOT, "jre")):
     tree_extra.append(Tree(os.path.join(ROOT, "jre"), prefix="jre"))
 
+# Heavy libs installed in the dev environment that the patcher never uses.
+# Without excluding them, dependency analysis sweeps them in and bloats the
+# one-file exe by ~130 MB (torch alone is huge). The patcher only does text-level
+# level editing via UnityPy.
+EXCLUDES = [
+    "torch", "torchvision", "torchaudio",
+    "scipy", "pandas", "matplotlib",
+    "numba", "llvmlite",
+    "frida", "frida_tools", "_frida",
+    "h5py", "sympy",
+    "tensorflow", "sklearn", "scikit_learn", "cv2",
+    "IPython", "notebook", "jupyter", "jupyter_core",
+    "PyQt5", "PyQt6", "PySide2", "PySide6",
+    "pytest",
+    # NOTE: do NOT exclude tkinter here — the patcher's GUI is Tkinter.
+]
+
 a = Analysis(
     [os.path.join(ROOT, "patcher", "patcher.py")],
     pathex=[ROOT],
@@ -35,7 +52,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=[],
+    excludes=EXCLUDES,
     noarchive=False,
 )
 pyz = PYZ(a.pure)

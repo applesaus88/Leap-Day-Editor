@@ -23,6 +23,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
+# When packaged with PyInstaller, read-only resources (tiles/, ui/, core/native
+# prebuilt libs, the signer jar) live under the bundle root, but build output must
+# NOT be written there — the .app / one-file dir is read-only and wiped per launch.
+FROZEN = getattr(sys, "frozen", False)
+if FROZEN:
+    ROOT = getattr(sys, "_MEIPASS", ROOT)           # bundled read-only resources
+    APP_HOME = os.path.join(os.path.expanduser("~"), "LeapDayModStudio")
+    # A windowed frozen app has no console, so tracebacks vanish. Tee stdout/stderr
+    # to a log the user (and we) can read: ~/LeapDayModStudio/studio.log.
+    try:
+        os.makedirs(APP_HOME, exist_ok=True)
+        _logf = open(os.path.join(APP_HOME, "studio.log"), "a", buffering=1)
+        sys.stdout = sys.stderr = _logf
+    except Exception:
+        pass
+else:
+    APP_HOME = ROOT
+
 from core.bundle import Bundle
 from core.chunkfmt import Chunk, Enemy, Conn, Path, Autotile, encode_grid, decode_grid, EMPTY
 from core.project import Project
@@ -33,9 +51,12 @@ CATALOG = os.path.join(ROOT, "tiles", "catalog.json")
 SPRITE_OVERRIDES = os.path.join(ROOT, "tiles", "sprite_overrides.json")
 ROSTER_LAYOUT = os.path.join(ROOT, "tiles", "roster_layout.json")
 PALETTES = os.path.join(ROOT, "tiles", "palettes.json")
-BUILD_DIR = os.path.join(ROOT, "build")
+BUILD_DIR = os.path.join(APP_HOME, "build")        # writable: ~/LeapDayModStudio/build when frozen
 JAN_INDEX = os.path.join(ROOT, "tools", "january_chunks", "january_index.json")
 THEME_INDEX = os.path.join(ROOT, "tools", "january_chunks", "theme_index.json")
+# UI is bundled at studio/ui — derive from ROOT so it resolves both from source
+# and when frozen (HERE/__file__ is unreliable inside a PyInstaller bundle).
+INDEX_HTML = os.path.join(ROOT, "studio", "ui", "index.html")
 
 
 class Api:
@@ -1252,9 +1273,14 @@ class Api:
     def get_sprites(self, tokens):
         """token -> base64 PNG data URI (or null). Used by the editor to paint
         with the real game art instead of colored placeholders."""
-        if not self.sprites:
+        try:
+            if not self.sprites:
+                return {}
+            return self.sprites.get_many(list(tokens))
+        except Exception:
+            import traceback
+            traceback.print_exc()
             return {}
-        return self.sprites.get_many(tokens)
 
     # ---- dev-mode sprite fixes (draw anchor / direction arrow) ------------
     def get_sprite_overrides(self):
@@ -1941,7 +1967,7 @@ def main():
     api = Api()
     window = webview.create_window(
         "Leap Day Mod Studio",
-        os.path.join(HERE, "ui", "index.html"),
+        INDEX_HTML,
         js_api=api,
         width=1280, height=860, min_size=(1000, 700),
     )

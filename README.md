@@ -1,4 +1,4 @@
-# Leap Day Mod Studio
+# Leap Day Editor
 
 Alpha. Most things work (~95%), and I'm still smoothing out the rest.
 

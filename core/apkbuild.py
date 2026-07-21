@@ -42,20 +42,30 @@ def _java() -> str:
 SIGNER_JAR = _resource("vendor", "uber-apk-signer.jar")
 
 
+def _sdk_bases() -> list[str]:
+    """Likely Android SDK root dirs, across macOS / Windows / Linux."""
+    bases = [
+        os.environ.get("ANDROID_HOME"),
+        os.environ.get("ANDROID_SDK_ROOT"),
+        os.path.expanduser("~/Library/Android/sdk"),          # macOS
+        os.path.expanduser("~/Android/Sdk"),                  # Linux
+    ]
+    local = os.environ.get("LOCALAPPDATA")                     # Windows default
+    if local:
+        bases.append(os.path.join(local, "Android", "Sdk"))
+    return [b for b in bases if b]
+
+
 def _find_adb() -> str:
     """Prefer the Android SDK's adb (matches the SDK emulator's adb server).
     A mismatched adb client (e.g. an old /etc copy on PATH) keeps killing and
     restarting the shared adb server, which transiently drops the emulator and
-    makes install/launch flaky."""
-    cands = [
-        os.environ.get("ADB"),
-        os.path.join(os.environ.get("ANDROID_HOME", ""), "platform-tools", "adb"),
-        os.path.join(os.environ.get("ANDROID_SDK_ROOT", ""), "platform-tools", "adb"),
-        os.path.expanduser("~/Library/Android/sdk/platform-tools/adb"),
-        os.path.expanduser("~/Android/Sdk/platform-tools/adb"),
-        shutil.which("adb"),
-        "/etc/platform-tools/adb",
-    ]
+    makes install/launch flaky. On Windows the binary is adb.exe."""
+    exe = "adb.exe" if os.name == "nt" else "adb"
+    cands = [os.environ.get("ADB")]
+    for base in _sdk_bases():
+        cands.append(os.path.join(base, "platform-tools", exe))
+    cands += [shutil.which("adb"), "/etc/platform-tools/adb"]
     for p in cands:
         if p and os.path.exists(p):
             return p
@@ -120,13 +130,10 @@ def adb_devices() -> list[str]:
 
 def _emulator_bin() -> str | None:
     exe = "emulator.exe" if os.name == "nt" else "emulator"
-    for base in (os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT"),
-                 os.path.expanduser("~/Library/Android/sdk"),
-                 os.path.expanduser("~/Android/Sdk")):
-        if base:
-            p = os.path.join(base, "emulator", exe)
-            if os.path.exists(p):
-                return p
+    for base in _sdk_bases():
+        p = os.path.join(base, "emulator", exe)
+        if os.path.exists(p):
+            return p
     return shutil.which("emulator")
 
 

@@ -718,4 +718,15 @@ class SpriteResolver:
         return rec
 
     def get_many(self, tokens) -> dict[str, dict | None]:
-        return {t: self.get(t) for t in tokens}
+        # Resolve each token independently: one token that raises must not blank
+        # the whole batch (the editor requests sprites in bulk). Log failures so a
+        # frozen build's silent breakage is diagnosable.
+        out: dict[str, dict | None] = {}
+        for t in tokens:
+            try:
+                out[t] = self.get(t)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                out[t] = None
+        return out
