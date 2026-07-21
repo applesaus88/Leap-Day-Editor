@@ -23,11 +23,13 @@ You need the exact game file **`leap-day-1-142-2.xapk`**. The patches target tha
 specific version, so a different build won't work. Supply your own copy (it isn't,
 and can't legally be, included here).
 
-## Download (Windows and macOS)
+## Download (Windows and macOS) — easiest
 
-The easy way. Grab a ready-to-run build from the
-[Releases page](https://github.com/applesaus88/Leap-Day-Editor/releases) — no
-Python, no Java, no NDK to install.
+**Most people should just do this.** There's a ready-to-run build on the
+[Releases page](https://github.com/applesaus88/Leap-Day-Editor/releases) —
+download one file, double-click, done. No Python, no Java, no NDK, nothing to set
+up. You don't need to clone the repo or install anything below; the only thing you
+bring is your own copy of the game.
 
 - Windows: download `LeapDayModStudio.exe` and double-click it. The first launch
   may show a blue "Windows protected your PC" box (unknown publisher) — click
@@ -35,7 +37,14 @@ Python, no Java, no NDK to install.
 - macOS: download `LeapDayModStudio-macos.zip`, unzip it, and move
   `LeapDayModStudio.app` to Applications. The first launch is blocked because it's
   unsigned — **right-click the app → Open**, then confirm. After that it opens
-  normally.
+  normally. If instead it says the app **"is damaged and can't be opened"**, macOS
+  has quarantined it; clear that in Terminal with:
+
+  ```
+  xattr -cr /path/to/LeapDayModStudio.app
+  ```
+
+  (drag the app onto the Terminal window to fill in the path), then open it again.
 
 Builds go to a `LeapDayModStudio` folder in your home directory, not inside the
 app, so nothing gets locked up.
@@ -76,13 +85,6 @@ that, rebuild the prebuilt with:
 ```
 python3 core/native/build_prebuilt.py <game.xapk>
 ```
-
-## Disk space
-
-The clone itself is tiny, about 4 MB. But a build unpacks the game and makes several
-working copies, so the folder balloons while it runs — figure 500–650 MB for one
-build's scratch and output. Plan for roughly **2 GB free** to edit and build
-comfortably (clone + Python deps ~150 MB + your game file ~150 MB + build scratch).
 
 ## Run it
 
