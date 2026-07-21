@@ -33,6 +33,15 @@
 /vendor/*
 !/vendor/uber-apk-signer.jar
 
+# re-include ONLY the captured by-date index the editor reads (so downloaded
+# builds get by-date editing); NOT the capture script or per-day intermediates
+!/tools/
+/tools/*
+!/tools/january_chunks/
+/tools/january_chunks/*
+!/tools/january_chunks/january_index.json
+!/tools/january_chunks/theme_index.json
+
 # strip generated files / OS junk INSIDE the re-included folders
 **/__pycache__/
 **/*.pyc

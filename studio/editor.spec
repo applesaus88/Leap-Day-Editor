@@ -63,10 +63,14 @@ trees = [
     Tree(os.path.join(ROOT, "core", "native"), prefix="core/native",
          excludes=["*.DS_Store", "__pycache__", "*.pyc"]),
 ]
-# optional captured per-date chunk index (editor degrades gracefully without it)
+# captured by-date chunk index the editor reads (so downloaded builds get by-date
+# editing). Bundle ONLY the two JSONs the app loads — not the capture script or
+# per-day intermediates. Editor degrades gracefully if they're absent.
 _jan = os.path.join(ROOT, "tools", "january_chunks")
-if os.path.isdir(_jan):
-    trees.append(Tree(_jan, prefix="tools/january_chunks"))
+for _f in ("january_index.json", "theme_index.json"):
+    _p = os.path.join(_jan, _f)
+    if os.path.exists(_p):
+        datas += [(_p, "tools/january_chunks")]
 
 # optional bundled JRE (CI drops a trimmed runtime at ./jre) so the user needs no
 # Java install. Omitted from local/source test builds — the app still runs; only
