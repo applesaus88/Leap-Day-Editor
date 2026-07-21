@@ -15,9 +15,13 @@ the copy of the game on your own machine, and they're never part of what you sha
 ## How sharing stays legal
 
 What you share is a `.ldmod` file. It holds only your level content, never any
-game code or assets. To play a mod, you bring your own copy of the game
-(`leap-day-*.xapk`); the studio applies the `.ldmod` on your machine and produces
-a signed, installable APK. Same idea as a ROM-hack patch.
+game code or assets. To play a mod, you bring your own copy of the game; the studio
+applies the `.ldmod` on your machine and produces a signed, installable APK. Same
+idea as a ROM-hack patch.
+
+You need the exact game file **`leap-day-1-142-2.xapk`**. The patches target that
+specific version, so a different build won't work. Supply your own copy (it isn't,
+and can't legally be, included here).
 
 ## Install
 
