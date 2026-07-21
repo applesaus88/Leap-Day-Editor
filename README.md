@@ -45,19 +45,18 @@ The GUI needs a webview backend, which depends on your OS:
 
 To build an APK you also need:
 
-- Java 17 or newer, for signing.
-- The Android NDK, to compile the native mod library on your first build. Get it
-  from Android Studio (SDK Manager → SDK Tools → NDK), or point `ANDROID_NDK_HOME`
-  at an existing one. The build compiles `libnativemod.so` once from
-  `core/native/nativemod.c`, then caches it; after that, mod changes only re-patch
-  the cached library, so the NDK isn't touched again.
+- Java 17 or newer, for signing. The signer itself is included, nothing to download.
 - To install to a device: `adb`, plus an arm64 emulator or phone. The game is
   arm64/armv7 only, so x86 won't work.
 
-Don't want to install the NDK? If a prebuilt `libnativemod.so` is attached to a
-release, drop it into `core/native/prebuilt/`. The build will use it instead of
-compiling, and you can skip the NDK entirely. (Editing levels in Safe mode needs
-none of this — the NDK only matters when you actually build.)
+That's it for a normal build. The repo already ships the prebuilt native library
+and its libmain patch, so you do **not** need the Android NDK or LIEF. You only
+need the NDK if you change the native source (`core/native/nativemod.c`); after
+that, rebuild the prebuilt with:
+
+```
+python3 core/native/build_prebuilt.py <game.xapk>
+```
 
 ## Run it
 
