@@ -64,9 +64,10 @@ jre/
 **/*.node
 **/frida-server
 
-# ...but DO ship the RELEASE prebuilt native lib so users can build without the
-# NDK. Debug builds (-dbg) stay ignored.
+# ...but DO ship the RELEASE prebuilt native lib + the libmain DT_NEEDED diff, so
+# users can build without the NDK or LIEF. Debug builds (-dbg) stay ignored.
 !core/native/prebuilt/
 core/native/prebuilt/*
 !core/native/prebuilt/libnativemod-*.so
 core/native/prebuilt/*-dbg.so
+!core/native/prebuilt/libmain_needed-*.bin
