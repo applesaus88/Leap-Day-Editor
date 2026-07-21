@@ -7,7 +7,7 @@ Pillow>=10.0             # sprite/image handling for the editor preview
 
 # Read-only: lets the editor locate sprites stored inside custom script
 # components (e.g. a Mace trap's art). Not required by the headless patcher.
-TypeTreeGeneratorAPI>=1.1
+TypeTreeGeneratorAPI>=0.0.9
 
 # Optional — only needed to (re)generate the native tuning library's libmain
 # DT_NEEDED patch. End users editing levels do NOT need this.
