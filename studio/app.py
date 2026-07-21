@@ -1972,6 +1972,25 @@ def main():
         width=1280, height=860, min_size=(1000, 700),
     )
     api._window = window
+    # CI smoke test (LDS_SMOKE=1): open the window so the native webview backend
+    # actually initialises (WebView2 on Windows, WebKit on macOS), auto-close it,
+    # and exit 0. Verifies the packaged app launches end to end without a human —
+    # a nonzero exit or crash fails the build. Any real run leaves LDS_SMOKE unset.
+    if os.environ.get("LDS_SMOKE"):
+        import threading
+        import time
+
+        def _autoclose():
+            time.sleep(8)
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+        threading.Thread(target=_autoclose, daemon=True).start()
+        webview.start()
+        print("[smoke] launched and closed cleanly", flush=True)
+        return
     webview.start()
 
 

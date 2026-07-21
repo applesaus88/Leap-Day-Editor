@@ -55,6 +55,20 @@ jobs:
       - name: Build executable
         run: python -m PyInstaller --noconfirm --distpath dist --workpath build_pyi studio/editor.spec
 
+      - name: Smoke-test the exe (launches, opens webview, exits 0)
+        shell: pwsh
+        env:
+          LDS_SMOKE: "1"
+        run: |
+          $p = Start-Process -FilePath "dist/LeapDayModStudio.exe" -PassThru
+          if (-not $p.WaitForExit(90000)) {
+            $p.Kill(); Write-Error "smoke: exe did not exit within 90s (hang)"; exit 1
+          }
+          if ($p.ExitCode -ne 0) {
+            Write-Error "smoke: exe exited with code $($p.ExitCode)"; exit 1
+          }
+          Write-Host "smoke: exe launched and exited cleanly"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
