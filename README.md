@@ -39,9 +39,21 @@ The GUI needs a webview backend, which depends on your OS:
 - Linux: `sudo apt install python3-gi gir1.2-webkit2-4.1`, then
   `pip install pycairo PyGObject`.
 
-To build an APK you also need Java 17 or newer for signing. To install to a device
-you need `adb` and an arm64 Android emulator or phone. The game is arm64/armv7
-only, so x86 won't work.
+To build an APK you also need:
+
+- Java 17 or newer, for signing.
+- The Android NDK, to compile the native mod library on your first build. Get it
+  from Android Studio (SDK Manager → SDK Tools → NDK), or point `ANDROID_NDK_HOME`
+  at an existing one. The build compiles `libnativemod.so` once from
+  `core/native/nativemod.c`, then caches it; after that, mod changes only re-patch
+  the cached library, so the NDK isn't touched again.
+- To install to a device: `adb`, plus an arm64 emulator or phone. The game is
+  arm64/armv7 only, so x86 won't work.
+
+Don't want to install the NDK? If a prebuilt `libnativemod.so` is attached to a
+release, drop it into `core/native/prebuilt/`. The build will use it instead of
+compiling, and you can skip the NDK entirely. (Editing levels in Safe mode needs
+none of this — the NDK only matters when you actually build.)
 
 ## Run it
 
