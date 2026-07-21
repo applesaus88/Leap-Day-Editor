@@ -16,6 +16,11 @@ on:
     branches: [ main, master ]
     tags: [ "v*" ]
 
+# the tag build creates a GitHub Release (softprops/action-gh-release), which
+# needs write access to repository contents. The default token is read-only.
+permissions:
+  contents: write
+
 jobs:
   windows-exe:
     runs-on: windows-latest
