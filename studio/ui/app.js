@@ -1553,9 +1553,29 @@ function fillRect(sel,token){const s=normSel(sel);const g=ensureLayer(state.laye
   for(let r=s.y0;r<=s.y1;r++)for(let c=s.x0;c<=s.x1;c++)if(inBounds(c,r))g[r][c]=token;}
 function copyRegion(){if(!state.sel)return;const s=normSel(state.sel),g=layerGrid(state.layer)||[];
   const cells=[];for(let r=s.y0;r<=s.y1;r++){const row=[];for(let c=s.x0;c<=s.x1;c++)row.push((g[r]&&g[r][c])||'-');cells.push(row);}
-  state.clipboard={w:s.x1-s.x0+1,h:s.y1-s.y0+1,cells};enterStamp();}
+  // enemies inside the selection travel too — WITH their per-cell tuning attributes
+  // (projectile, shoot/walk speed, …), so copying a fish-shooting Cupid gives you
+  // another fish-shooting Cupid.
+  const enemies=((state.chunk&&state.chunk.enemies)||[]).filter(e=>{
+    const ex=Math.round(e.sx),ey=Math.round(e.sy);
+    return ex>=s.x0&&ex<=s.x1&&ey>=s.y0&&ey<=s.y1;
+  }).map(e=>({dx:Math.round(e.sx)-s.x0,dy:Math.round(e.sy)-s.y0,
+              e:JSON.parse(JSON.stringify(e)),
+              tun:(state.enemyTuning||{})[etKey(Math.round(e.sx),Math.round(e.sy))]}));
+  state.clipboard={w:s.x1-s.x0+1,h:s.y1-s.y0+1,cells,enemies};enterStamp();}
 function pasteAt(c,r){if(!state.clipboard)return;snapshot();const g=ensureLayer(state.layer);
-  for(let dr=0;dr<state.clipboard.h;dr++)for(let dc=0;dc<state.clipboard.w;dc++){const t=state.clipboard.cells[dr][dc];if(t!=='-'&&inBounds(c+dc,r+dr)){g[r+dr][c+dc]=t;ensureSprite(t);}}draw();}
+  for(let dr=0;dr<state.clipboard.h;dr++)for(let dc=0;dc<state.clipboard.w;dc++){const t=state.clipboard.cells[dr][dc];if(t!=='-'&&inBounds(c+dc,r+dr)){g[r+dr][c+dc]=t;ensureSprite(t);}}
+  // place copied enemies + carry their tuning attributes onto the new cells
+  const cbe=state.clipboard.enemies;
+  if(cbe&&cbe.length){
+    state.chunk.enemies=state.chunk.enemies||[];
+    cbe.forEach(ce=>{const nsx=c+ce.dx,nsy=r+ce.dy;if(!inBounds(nsx,nsy))return;
+      const ne=JSON.parse(JSON.stringify(ce.e));ne.sx=nsx;ne.sy=nsy;
+      state.chunk.enemies.push(ne);ensureSprite(ne.properties);
+      if(ce.tun){state.enemyTuning=state.enemyTuning||{};
+        state.enemyTuning[etKey(nsx,nsy)]=JSON.parse(JSON.stringify(ce.tun));}});
+  }
+  draw();}
 // After a copy the brush BECOMES the copied region: a ghost of the clipboard
 // follows the cursor (so you see where it lands) and each click stamps it, until
 // Esc / right-click / picking another tool. Clipboard survives, so you can even
@@ -1580,6 +1600,11 @@ function drawStampGhost(){
     if(rec&&rec.img)blit(rec,x,y);else{ctx.fillStyle=CAT_COLOR[tileCat(t)]||'#3a3f4b';ctx.fillRect(x+1,y+1,CELL-2,CELL-2);}
     ctx.globalAlpha=1;
   }
+  // ghost the copied enemies too so you see where they'll land
+  (cb.enemies||[]).forEach(ce=>{const nx=hc+ce.dx,ny=hr+ce.dy;if(!inBounds(nx,ny))return;
+    const rec=sprites[ce.e&&ce.e.properties],x=nx*CELL,y=ny*CELL;ctx.globalAlpha=0.5;
+    if(rec&&rec.img)enemyBlit(rec,x,y);else{ctx.fillStyle='#ff5a5a55';ctx.fillRect(x+1,y+1,CELL-2,CELL-2);}
+    ctx.globalAlpha=1;});
   ctx.strokeStyle='#ffcc33';ctx.lineWidth=1.5/state.view.scale; // amber = "floating paste"
   ctx.strokeRect(hc*CELL+.5,hr*CELL+.5,cb.w*CELL-1,cb.h*CELL-1);
 }
@@ -1856,7 +1881,8 @@ function themeLabel(idx){return (idx==null||idx<0)?'?':(state.themeNames[idx]||(
 function applyDay(r){
   if(r.error){$('#dateInfo').textContent=r.error;$('#daySeq').innerHTML='';dayState=null;return;}
   dayState=r;
-  const gp=r.rows.filter(x=>x.role==='gameplay');
+  const _end=r.rows.findIndex(x=>x.role==='end'); // hide/ignore gameplay past the finish
+  const gp=r.rows.filter((x,i)=>x.role==='gameplay'&&!(_end>=0&&i>_end));
   const ed=gp.filter(x=>x.edited).length, del=gp.filter(x=>x.deleted).length;
   const locked=r.force_date===r.date;
   // theme: forced overrides native; reflect in the dropdown + info line
@@ -1971,10 +1997,17 @@ function renderChunkPickGrid(){
   grid.appendChild(frag);
   grid.querySelectorAll('.gswatch').forEach(sw=>{if(sw._name)_ckIO.observe(sw);});
 }
-async function loadDay(date){if(!date)return;applyDay(await api().get_day_sequence(date));}
+// session undo: the recent removals (structural sections AND deleted normal
+// chunks) for the current day, newest last. Only the last few are offered.
+let dayUndo=[], dayUndoDate=null;
+async function loadDay(date){if(!date)return;
+  if(date!==dayUndoDate){dayUndo=[];dayUndoDate=date;} // fresh undo history per day
+  applyDay(await api().get_day_sequence(date));}
 async function pushOrder(){applyDay(await api().set_day_order(dayState.date,dayState.order));}
 const MAX_CHUNKS=56;   // the game won't load a level with more than 56 chunks (sections)
-function daySectionCount(){return dayState&&dayState.rows?dayState.rows.filter(r=>!r.removed).length:0;}
+function daySectionCount(){if(!(dayState&&dayState.rows))return 0;
+  const e=dayState.rows.findIndex(r=>r.role==='end'); // don't count unreachable slots past the finish
+  return dayState.rows.filter((r,i)=>!r.removed&&!(e>=0&&i>e&&r.role==='gameplay')).length;}
 function renderDaySeq(){
   const box=$('#daySeq');box.innerHTML='';
   // number the EFFECTIVE checkpoints in play order (start→finish): a structural
@@ -1994,6 +2027,10 @@ function renderDaySeq(){
      nextGp[i]=g;
    }}
   const removedCps=[];
+  // the finish ENDS the level — any gameplay slot the model pushes PAST it (e.g.
+  // native filler that lands above the finish after deletes) is never reached
+  // in-game, so hide it from the editor instead of showing a phantom section.
+  const endIdx=dayState.rows.findIndex(r=>r.role==='end');
   _seqDisp=[]; // the rows actually drawn, for drag maths
   dayState.rows.forEach((row,ri)=>{
     // a removed checkpoint is gone from the level — don't clutter the list with it;
@@ -2002,6 +2039,8 @@ function renderDaySeq(){
     // a slot freed by a delete reverts to the game's NATIVE chunk (the generator
     // slot count is fixed) — don't show that filler as an authored section.
     if(row.role==='gameplay'&&row.deleted&&row.orig)return;
+    // unreachable gameplay past the finish — hide it (player never sees it).
+    if(endIdx>=0&&ri>endIdx&&row.role==='gameplay')return;
     const el=document.createElement('div');
     const di=_seqDisp.length;
     _seqDisp.push({role:row.role,gp:row.role==='gameplay'?row.gp:null,
@@ -2018,8 +2057,14 @@ function renderDaySeq(){
       let btns='';
       if(!bookend&&nextGp[ri]!=null)
         btns+=`<button data-ins="${nextGp[ri]}" title="add a section here (pushes everything above up)">＋</button>`;
-      btns+=`<button data-repn="${row.name}" title="swap this piece for another">⇄</button>`
-        +(row.edited?`<button data-restoren="${row.name}" title="restore original">↺</button>`:'');
+      // the START bookend always offers ＋ so you can add a section at the very
+      // beginning even when the day has no gameplay chunks left.
+      else if(row.role==='start')
+        btns+=`<button data-ins="0" title="add a section at the start (pushes everything up)">＋</button>`;
+      // the start/end bookends can't be swapped (they're load-bearing) — no ⇄ there
+      if(!bookend)
+        btns+=`<button data-repn="${row.name}" title="swap this piece for another">⇄</button>`;
+      btns+=(row.edited?`<button data-restoren="${row.name}" title="restore original">↺</button>`:'');
       // any structural piece except the bookends can be dropped from the day.
       if(!bookend&&row.struct_ord!=null)
         btns+=`<button data-cpremove="${row.struct_ord}" title="remove this section from the day">✕</button>`;
@@ -2063,9 +2108,15 @@ function renderDaySeq(){
     +(removedCps.length?` · <b>${removedCps.length}</b> removed`:'')
     +(over?` <span style="color:var(--danger)">— over the game's limit, remove ${nsec-MAX_CHUNKS}</span>`:'');
   box.appendChild(info);
-  if(removedCps.length){
+  // undo footer: only the last 3 removals (sections OR deleted normal chunks).
+  const recentUndo=dayUndo.slice(-3);
+  if(recentUndo.length){
     const rf=document.createElement('div');rf.className='seqrestore';
-    rf.innerHTML='removed: '+removedCps.map(r=>`<button data-cprestore="${r.struct_ord}" title="put this section back into the level">↺ ${r.name}</button>`).join(' ');
+    rf.innerHTML='undo: '+recentUndo.map((u,i)=>{
+      const idx=dayUndo.length-recentUndo.length+i;             // stable index into dayUndo
+      const nm=String(u.name).split('/').pop();
+      return `<button data-undo="${idx}" title="put this back into the level">↺ ${nm}</button>`;
+    }).join(' ');
     box.appendChild(rf);
   }
   // append-to-end control (EXPERIMENTAL longer levels, POWER MODE only): adds a
@@ -2089,8 +2140,18 @@ function renderDaySeq(){
   box.querySelectorAll('[data-repn]').forEach(b=>b.onclick=()=>replaceName(b.dataset.repn));
   box.querySelectorAll('[data-restoren]').forEach(b=>b.onclick=()=>replaceName(b.dataset.restoren,''));
   // checkpoint remove / restore / custom-flag
-  box.querySelectorAll('[data-cpremove]').forEach(b=>b.onclick=async()=>{applyDay(await api().remove_day_checkpoint(dayState.date,+b.dataset.cpremove));setStatus('section removed from this day');});
-  box.querySelectorAll('[data-cprestore]').forEach(b=>b.onclick=async()=>{applyDay(await api().restore_day_checkpoint(dayState.date,+b.dataset.cprestore));setStatus('section restored');});
+  box.querySelectorAll('[data-cpremove]').forEach(b=>b.onclick=async()=>{
+    const so=+b.dataset.cpremove;
+    const row=(dayState.rows||[]).find(r=>r.struct_ord===so&&r.role!=='gameplay');
+    dayUndo.push({kind:'struct',ord:so,name:row?row.name:'section'}); // record for undo
+    applyDay(await api().remove_day_checkpoint(dayState.date,so));setStatus('section removed from this day');});
+  // undo footer: restore the picked removal (structural section or deleted chunk)
+  box.querySelectorAll('[data-undo]').forEach(b=>b.onclick=async()=>{
+    const u=dayUndo[+b.dataset.undo];if(!u)return;
+    dayUndo.splice(+b.dataset.undo,1);
+    if(u.kind==='struct')applyDay(await api().restore_day_checkpoint(dayState.date,u.ord));
+    else applyDay(await api().insert_day_chunk(dayState.date,u.gp,u.name));
+    setStatus('restored '+String(u.name).split('/').pop());});
   box.querySelectorAll('[data-cpflag]').forEach(b=>b.onclick=async()=>{const gp=+b.dataset.cpflag;const cur=(dayState.rows.find(r=>r.gp===gp)||{}).checkpoint;applyDay(await api().toggle_custom_checkpoint(dayState.date,gp,!cur));setStatus(cur?'custom checkpoint removed':'custom checkpoint set here');});
   wireDayDrag(box);
   applyPower(); // honour power state for new rows
@@ -2157,13 +2218,30 @@ async function editName(name){loadChunkModel(await api().load_chunk(name));
 // it so "edit a chunk, then drop it into a slot" doesn't need retyping the name.
 function editingName(){return (state.chunk&&state.chunk.name)||'';}
 async function replaceName(name,src){
-  const s=src!==undefined?src:prompt('Replace "'+name+'" with which chunk\'s content?\n(blank = restore original)',editingName()||name);
-  if(s===null)return;
-  await api().replace_chunk(name,s.trim());
+  // ⇄ swap (no src): choose the replacement from the visual picker — same grid as
+  // gameplay swaps — instead of a raw text prompt. Structural pieces (checkpoint/
+  // end/special) aren't in the gameplay order array, so they swap by name via
+  // replace_chunk (unchanged); only the input method changes. A provided src
+  // (e.g. '' from the ↺ restore button) applies directly.
+  if(src===undefined){
+    openChunkPicker('Swap "'+name+'" for…',async picked=>{
+      const p=(picked||'').trim();
+      await api().replace_chunk(name,p);
+      if(dayState)await loadDay(dayState.date);
+      setStatus(p?('replaced '+name+' ← '+p):('restored '+name));
+    },true); // blank option = restore original
+    return;
+  }
+  await api().replace_chunk(name,src.trim());
   if(dayState)await loadDay(dayState.date);
-  setStatus(s.trim()?('replaced '+name+' ← '+s.trim()):('restored '+name));}
+  setStatus(src.trim()?('replaced '+name+' ← '+src.trim()):('restored '+name));}
 async function moveGp(gp,dir){const o=dayState.order,j=gp+dir;if(j<0||j>=o.length)return;[o[gp],o[j]]=[o[j],o[gp]];await pushOrder();}
-async function delGp(gp){applyDay(await api().delete_day_chunk(dayState.date,gp));}
+async function delGp(gp){
+  // remember the deleted normal chunk so it can be restored from the undo footer
+  const row=(dayState.rows||[]).find(r=>r.role==='gameplay'&&r.gp===gp);
+  const nm=row&&(row.name||row.orig);
+  if(nm)dayUndo.push({kind:'gp',gp,name:nm});
+  applyDay(await api().delete_day_chunk(dayState.date,gp));}
 // end/checkpoint/special chunks are FUNCTIONAL — an end chunk (finish/endzone)
 // has a FinalChunk component that ENDS the level when reached, so it only works
 // at the level's end; checkpoints/specials are fixed too. Putting one in a

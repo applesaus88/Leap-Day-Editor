@@ -185,8 +185,8 @@ _SHOOTERS = [
              "AsteroidMedium", flabel="breaks into"),
     # ObjectPool-fed shooters: each of these enemies has exactly ONE ObjectPool,
     # so writing that pool's `prefab` (cls='ObjectPool') swaps what it fires.
-    _shooter("shooter_manhole", "🕳 Manhole monster", "ObjectPool",
-             ["ManholeMonster"], "prefab", "ManholeMonsterShot"),
+    # NOTE: Manhole monster is intentionally NOT a projectile-swap shooter — it
+    # can't fire different projectiles, so no "shoots" option is offered for it.
     _shooter("shooter_metaltrunky", "🐘 Metal trunky", "ObjectPool",
              ["MetalTrunky"], "prefab", "AcidBall"),
     _shooter("shooter_turtle", "🐢 Turtle snail", "ObjectPool",
