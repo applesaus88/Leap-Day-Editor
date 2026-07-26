@@ -112,6 +112,13 @@
           <label class="et-walk">walk speed × <select id="etWalk" title="multiply this walking enemy's move speed (1 = normal, 0.5 = half, 2 = double, 0 = frozen)"></select></label>
           <label class="et-shoot">shoot speed × <select id="etShootMult" title="multiply this enemy's launch speed (1 = normal, 0.5 = half, 2 = double)"></select></label>
           <label class="et-shoot">fire rate × <select id="etFireMult" title="how often it shoots/spawns (2 = twice as fast). Works on enemies/spawners with a cadence field."></select></label>
+          <label class="et-cannon">fires ▸ <select id="etDir" title="which way THIS cannon fires (leave = its built-in direction)">
+              <option value="">— leave default —</option>
+              <option value="right">right ▶</option><option value="left">left ◀</option>
+              <option value="up">up ▲</option><option value="down">down ▼</option>
+              <option value="upright">up-right ◥</option><option value="upleft">up-left ◤</option>
+              <option value="downright">down-right ◢</option><option value="downleft">down-left ◣</option>
+            </select></label>
         </div>
         <div id="axeSettings" hidden style="margin-top:8px;border-top:1px solid var(--line,#333);padding-top:8px">
           <div class="chk" style="margin-bottom:6px"><b>Axe boomerang</b> — how the thrown axe flies. This is a <b>global</b> setting: it applies to every axe in the mod. Leave blank for the default.</div>
@@ -136,6 +143,13 @@
         <datalist id="devArtList"></datalist>
         <div class="row"><button data-act="devSave" class="accent">Save fix</button><button data-act="devReset">Reset</button></div>
         <div class="chk">edits the selected tile (or enemy). cross = cell origin the pivot snaps to · box = sprite draw area. <b>sprite</b> = pick the correct art if the wrong one was auto-detected. Saved to tiles/sprite_overrides.json and applied to the editor permanently.</div>
+        <div id="devMuzzle" hidden style="margin-top:8px;border-top:1px solid var(--line,#333);padding-top:8px">
+          <h3 style="margin:.2em 0">🎯 Shooting point</h3>
+          <div class="devrow"><label>direction <select id="devMzDir"></select></label></div>
+          <div class="devrow"><label>forward <input id="devMzF" class="devnum" type="number" step="0.5"></label><label>up <input id="devMzU" class="devnum" type="number" step="0.5"></label><span class="devhint">world units</span></div>
+          <div class="row"><button data-act="devMzClear" class="devmini" title="reset this direction to the game's default muzzle">Reset dir</button><button data-act="devMzView" class="devmini" title="reset the preview camera (or double-click the preview)">⟲ view</button></div>
+          <div class="chk"><b>Drag the 🎯 on the preview</b> (or type forward/up) to move where this cannon spawns its shot, per firing direction. <b>Scroll to zoom, drag empty space to pan</b> (double-click resets). The sprite rotates to the chosen direction — the <b>anchor sliders above also apply to this direction only</b> (each orientation keeps its own draw anchor + shooting point). Baked into every cannon you paint with that direction.</div>
+        </div>
       </div>
 
       <div class="panel" id="devShootPanel" hidden>

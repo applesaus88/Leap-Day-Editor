@@ -54,6 +54,7 @@ GAME_VERSION = "1.142.2"          # ships as leap-day-1-142-2.xapk
 
 CATALOG = os.path.join(ROOT, "tiles", "catalog.json")
 SPRITE_OVERRIDES = os.path.join(ROOT, "tiles", "sprite_overrides.json")
+CANNON_MUZZLES = os.path.join(ROOT, "tiles", "cannon_muzzles.json")
 ROSTER_LAYOUT = os.path.join(ROOT, "tiles", "roster_layout.json")
 PALETTES = os.path.join(ROOT, "tiles", "palettes.json")
 BUILD_DIR = os.path.join(APP_HOME, "build")        # writable: ~/LeapDayModStudio/build when frozen
@@ -77,6 +78,12 @@ class Api:
         # baked into the editor permanently — applied by the SpriteResolver.
         self._sprite_overrides = (json.load(open(SPRITE_OVERRIDES))
                                   if os.path.exists(SPRITE_OVERRIDES) else {})
+        # per-cannon-token muzzle (shooting point) per firing direction, placed in
+        # the sprite editor: {token: {dir: [forward, up]}} in cannon-base world units
+        # (the native re-rotates it by the chosen aim). Baked into each painted
+        # cannon's per-cell tuning at paint time.
+        self._cannon_muzzles = (json.load(open(CANNON_MUZZLES))
+                                if os.path.exists(CANNON_MUZZLES) else {})
         # dev-authored roster layout (custom order + clusters) shown to safe-mode
         # users in the "Browse all" atlas. {"order":[token,...], "clusters":[...]}.
         self._roster_layout = (json.load(open(ROSTER_LAYOUT))
@@ -144,6 +151,8 @@ class Api:
             # per-INDIVIDUAL-enemy tuning ("chunk|sx|sy" -> {projectile,health,walk,h}),
             # applied in-process by an embedded libnativemod.so (core/nativemod.py).
             "enemy_tuning": self.project.enemy_tuning,
+            # per-cannon-token muzzle (shooting point) per direction, sprite-editor placed
+            "cannon_muzzles": self._cannon_muzzles,
             # global axe-boomerang tunables {range,speed,spin} (blank = baked default)
             "axe": self.project.axe,
             "projectiles": __import__("core.elements", fromlist=["x"])._ALL_PROJECTILES,
@@ -841,6 +850,12 @@ class Api:
                 if p.get("enemy"):               # shooting-enemy projectile panels
                     e["enemy"] = True
                     e["carriers"] = p["carriers"]  # the enemy tokens this panel serves
+                if p.get("percell"):             # per-cell cannons (rotate + tune per placement)
+                    e["percell"] = True
+                    e["carriers"] = p.get("carriers", [])
+                    e["base_dir"] = p.get("base_dir", "right")
+            if p.get("variants"):                # cannons keep direction variants too
+                e["variants"] = p["variants"]
             ui.append(e)
         return {"panels": ui, "token_kind": elements.TOKEN_KIND}
 
@@ -966,7 +981,13 @@ class Api:
                 sx, sy = int(sx), int(sy)
             except ValueError:
                 continue
-            if (sx, sy) not in cells:            # enemy no longer exists -> drop it
+            # Cannons are TILES, not enemies: they carry a firing direction
+            # (dir_x/dir_y). Those cells are never in `cells` (which is built from
+            # placed enemies), so reconciling them against enemies would wrongly
+            # drop every cannon config. Keep a record if it's an enemy cell OR a
+            # cannon record (has a direction).
+            is_cannon = rec.get("dir_x") not in (None, "") or rec.get("dir_y") not in (None, "")
+            if not is_cannon and (sx, sy) not in cells:   # enemy no longer exists -> drop it
                 continue
             clean = {}
             proj = (rec.get("projectile") or "").strip()
@@ -982,6 +1003,13 @@ class Api:
             fm = rec.get("firemult")
             if fm not in (None, "") and float(fm) != 1.0:
                 clean["firemult"] = float(fm)
+            if is_cannon:                        # per-cannon firing direction + muzzle rotation
+                clean["dir_x"] = float(rec["dir_x"])
+                clean["dir_y"] = float(rec["dir_y"])
+                if rec.get("muzzle_x") not in (None, ""):   # placed shooting point
+                    clean["muzzle_x"] = float(rec["muzzle_x"])
+                if rec.get("muzzle_y") not in (None, ""):
+                    clean["muzzle_y"] = float(rec["muzzle_y"])
             if not clean:                        # nothing actually tuned -> no record
                 continue
             clean["h"] = int(h or rec.get("h") or 0)
@@ -1456,6 +1484,42 @@ class Api:
         return {"ok": True, "token": token, "rec": rec,
                 "overrides": self._sprite_overrides}
 
+    # ---- cannon muzzle (per-token, per-direction shooting point) --------------
+    def get_cannon_muzzles(self):
+        """{token: {dir: [forward, up]}} — the placed shooting points, for the
+        sprite editor to draw and the paint path to bake into each cannon."""
+        return self._cannon_muzzles
+
+    def _save_cannon_muzzles(self):
+        os.makedirs(os.path.dirname(CANNON_MUZZLES), exist_ok=True)
+        with open(CANNON_MUZZLES, "w") as f:
+            json.dump(self._cannon_muzzles, f, indent=2, sort_keys=True)
+
+    def set_cannon_muzzle(self, token, direction, forward, up):
+        """Place `token`'s shooting point for one firing `direction` (base-frame
+        forward/up, world units). Persisted and returned."""
+        token = str(token); direction = str(direction)
+        try:
+            fwd, u = float(forward), float(up)
+        except (TypeError, ValueError):
+            return {"error": "bad muzzle offset"}
+        self._cannon_muzzles.setdefault(token, {})[direction] = [fwd, u]
+        self._save_cannon_muzzles()
+        return {"ok": True, "muzzles": self._cannon_muzzles}
+
+    def clear_cannon_muzzle(self, token, direction=None):
+        """Drop one direction's shooting point (or the whole token's if direction
+        is None) so it falls back to the game's authored muzzle."""
+        token = str(token)
+        if direction is None:
+            self._cannon_muzzles.pop(token, None)
+        elif token in self._cannon_muzzles:
+            self._cannon_muzzles[token].pop(str(direction), None)
+            if not self._cannon_muzzles[token]:
+                self._cannon_muzzles.pop(token, None)
+        self._save_cannon_muzzles()
+        return {"ok": True, "muzzles": self._cannon_muzzles}
+
     def list_chunks(self, active_only=True):
         if active_only:
             names = self._catalog.get("active_season_chunks", [])
@@ -1739,7 +1803,7 @@ class Api:
         self._cp_session, self._cp_script = session, script  # keep alive
         log("[flags] respawn-flag agent attached")
 
-    def playtest(self, payload=None):
+    def playtest(self, payload=None, enemy_tuning=None):
         """Build the CURRENT mod (your edited chunks + day-order reshaping +
         date lock) into a throwaway APK, install it, and launch the game so you
         land on your locked day's level. If a chunk is open it's saved first.
@@ -1755,6 +1819,10 @@ class Api:
             target = (self.project.library if (self.bundle and not self._is_real_chunk(nm))
                       else self.project.levels)
             target[nm] = xml
+            # commit the open chunk's per-cell tuning (enemy + cannon config) so the
+            # build embeds it — without this, playtest ships the chunk but drops the
+            # cannon/enemy tuning, and the native tuning worker exits (g_ntunes==0).
+            self._commit_enemy_tuning(nm, payload, enemy_tuning)
         if "vip_unlock" not in self.project.patches:  # always playtest with the unlocks on
             self.project.patches.append("vip_unlock")
         moved = self._sanitize_levels(self.project)  # custom-named levels -> library

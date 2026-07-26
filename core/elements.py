@@ -49,22 +49,8 @@ _VARIANTS = [
                   {"token": "greenpipe_down", "label": "down ▼"},
                   {"token": "greenpipe_left", "label": "left ◀"},
                   {"token": "greenpipe_right", "label": "right ▶"}]},
-    # ---- cannons: one per look, direction picked with a button ----------------
-    # each cannon tile bakes its firing direction in, so the "direction" variants
-    # just swap to the correctly-oriented tile. ghost/barrel/blue fire horizontally
-    # (left/right); red fires vertically (up/down).
-    {"kind": "cannon_ghost", "label": "💥 Cannon · ghost", "mechanism": "variant",
-     "variants": [{"token": "trap126", "label": "right ▶"},
-                  {"token": "trap127", "label": "left ◀"}]},
-    {"kind": "cannon_barrel", "label": "💥 Cannon · barrel", "mechanism": "variant",
-     "variants": [{"token": "trap128", "label": "right ▶"},
-                  {"token": "trap129", "label": "left ◀"}]},
-    {"kind": "cannon_blue", "label": "💥 Cannon · blue", "mechanism": "variant",
-     "variants": [{"token": "trap130", "label": "right ▶"},
-                  {"token": "trap131", "label": "left ◀"}]},
-    {"kind": "cannon_red", "label": "💥 Cannon · red", "mechanism": "variant",
-     "variants": [{"token": "trap133", "label": "up ▲"},
-                  {"token": "trap132", "label": "down ▼"}]},
+    # cannons are defined below as "fields" panels (_CANNONS) so each one can pick
+    # its projectile / fire rate / shot speed as well as direction.
     # ---- checkpoint FLAG + RESPAWN point (paired, author-placed) --------------
     # Two placeable markers that both paint a HomingMissileCannon (the only prefab
     # with built-in proximity detection). The shipped native mod tells them apart
@@ -196,14 +182,56 @@ _SHOOTERS = [
              "Coconut"),
 ]
 
-PANELS = _VARIANTS + _MACE + _FIELDS + _SHOOTERS
+
+# --- cannons: ONE panel. Direction buttons pick the sprite, and the fields set
+# this cannon's projectile / shot speed / fire rate / firing direction. All of it
+# is applied PER CELL (the native per-block tuning engine) as you paint — so every
+# cannon is independent, no config limit. `fires` can aim any of 8 ways regardless
+# of the sprite, so any cannon can shoot up/down/diagonally.
+# the 8 firing directions. Choosing one ROTATES the cannon sprite to match (the
+# editor bakes the rotation) AND sets the native firing direction — so a cannon
+# both looks and shoots the way you pick.
+_CANNON_FIRES = [
+    {"value": "right", "label": "right ▶"}, {"value": "downright", "label": "down-right ◢"},
+    {"value": "down", "label": "down ▼"}, {"value": "downleft", "label": "down-left ◣"},
+    {"value": "left", "label": "left ◀"}, {"value": "upleft", "label": "up-left ◤"},
+    {"value": "up", "label": "up ▲"}, {"value": "upright", "label": "up-right ◥"},
+]
+
+
+# each look has ONE base sprite whose muzzle points `base_dir`; the chosen firing
+# direction rotates it from there.
+def _cannon(kind, label, token, base_dir):
+    return {"kind": kind, "label": label, "mechanism": "fields", "percell": True,
+            "carriers": [token], "base_dir": base_dir,
+            "fields": [
+                {"key": "projectile", "type": "select", "default": "", "label": "shoots",
+                 "options": [{"value": "", "label": "— default —"}] + _ALL_PROJECTILES},
+                {"key": "shootmult", "type": "number", "default": 1, "min": 0,
+                 "max": 5, "step": 0.25, "label": "shot speed ×"},
+                {"key": "firemult", "type": "number", "default": 1, "min": 0,
+                 "max": 5, "step": 0.25, "label": "fire rate ×"},
+                {"key": "direction", "type": "select", "default": base_dir, "label": "fires",
+                 "options": _CANNON_FIRES},
+            ]}
+
+
+_CANNONS = [
+    _cannon("cannon_ghost", "💥 Cannon · ghost", "trap126", "right"),
+    _cannon("cannon_barrel", "💥 Cannon · barrel", "trap128", "right"),
+    _cannon("cannon_blue", "💥 Cannon · blue", "trap130", "right"),
+    _cannon("cannon_red", "💥 Cannon · red", "trap133", "up"),
+]
+
+PANELS = _VARIANTS + _MACE + _FIELDS + _SHOOTERS + _CANNONS
 BY_KIND = {p["kind"]: p for p in PANELS}
 
 # token -> kind, so the UI can tell which panel a selected tile opens.
 TOKEN_KIND: dict[str, str] = {}
 for _p in PANELS:
-    _toks = ([v["token"] for v in _p["variants"]] if _p["mechanism"] == "variant"
-             else _p.get("carriers", []))
+    # a placed token belongs to this panel whether it's a variant option or a
+    # carrier (cannons are fields panels that place via variant tokens).
+    _toks = [v["token"] for v in _p.get("variants", [])] + list(_p.get("carriers", []))
     for _t in _toks:
         TOKEN_KIND[_t] = _p["kind"]
 
@@ -214,8 +242,11 @@ def kind_of_token(token: str) -> str | None:
 
 
 # a "select" field with coerce="dir2" maps a direction word to a Vector2.
+_D = 0.70710678  # normalised diagonal component
 DIR2 = {"right": {"x": 1.0, "y": 0.0}, "left": {"x": -1.0, "y": 0.0},
-        "up": {"x": 0.0, "y": 1.0}, "down": {"x": 0.0, "y": -1.0}}
+        "up": {"x": 0.0, "y": 1.0}, "down": {"x": 0.0, "y": -1.0},
+        "upright": {"x": _D, "y": _D}, "upleft": {"x": -_D, "y": _D},
+        "downright": {"x": _D, "y": -_D}, "downleft": {"x": -_D, "y": -_D}}
 
 
 def field_values(panel: dict, settings: dict) -> dict:

@@ -208,3 +208,10 @@ vendor/  uber-apk-signer.jar
 Claude has been used to debug code. 95% of the code is written by a human. Claude
 did help a lot with writing/translating the documentation and the comments since
 English isn't my first language.
+
+## Disclaimer
+
+Leap Day Editor is a **level editor / patcher**. It ships **no Leap Day code or
+assets**. "Leap Day" is © Nitrome Ltd; all game code, art, audio, and
+metadata belong to Nitrome. This project is **unofficial** and is **not affiliated
+with, authorized by, or endorsed by Nitrome**.

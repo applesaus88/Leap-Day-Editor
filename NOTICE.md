@@ -2,7 +2,7 @@
 
 ## What this project is
 Leap Day Editor is a **level editor / patcher**. It ships **no Leap Day code or
-assets**. "Leap Day" is © Nitrome Ltd; all game code, art, audio, levels, and
+assets**. "Leap Day" is © Nitrome Ltd; all game code, art, audio, and
 metadata belong to Nitrome. This project is **unofficial** and is **not affiliated
 with, authorized by, or endorsed by Nitrome**.
 

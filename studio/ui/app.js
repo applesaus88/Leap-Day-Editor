@@ -29,6 +29,8 @@ const state={
   libEdit:false, // true when the open chunk is a custom-library chunk
   themeNames:[], // Level.Theme roster (from the backend)
   dev:false, devTok:null, devOverrides:{}, artNames:[], devArtPick:false, // dev: hand-edit a sprite's anchor/rot/arrow/art
+  cannonMuzzles:{}, mzDir:'right', mzDrag:false, // sprite-editor cannon shooting-point per direction
+  devView:{zoom:1,ox:0,oy:0}, // sprite-fix preview camera (pan ox/oy px, zoom)
   firebars:{}, // carrier token -> {length,double,start,clockwise,circular} for canvas drawing
   enemyTuning:{}, // "chunk|sx|sy" -> {projectile,health,walk,h} per-INDIVIDUAL-enemy tuning
   axe:{}, // global axe-boomerang tunables {range,speed,spin} (blank = baked default)
@@ -92,15 +94,29 @@ function updateFirebarPanel(){
   state.trapKind=kind;el.hidden=!kind;
   if(!kind){state.panelKind=null;return;}
   const p=ELEM_PANELS[kind]||{},mech=p.mechanism;
+  const hasVar=!!(p.variants&&p.variants.length);
   $('#fbTitle').textContent=p.label||kind;
   $('#fbMace').hidden=(mech!=='mace');
   $('#fbFields').hidden=(mech!=='fields');
-  $('#fbVariants').hidden=(mech!=='variant');
+  // variants show for a pure variant panel OR alongside fields (cannon direction)
+  $('#fbVariants').hidden=!(mech==='variant'||(mech==='fields'&&hasVar));
   $('#fbBtn').hidden=(mech==='variant'); // variant places on click, no button
   // only (re)build the dynamic controls when the KIND changes — otherwise placing
   // (which re-runs this) would reset the fields you just set back to defaults.
   const changed=(state.panelKind!==kind);state.panelKind=kind;
-  if(mech==='fields'){if(changed)renderElemFields(p);$('#fbBtn').textContent=p.enemy?'Apply projectile':'Use this — paint it';}
+  if(changed)state.elemCarrier=null; // reset the picked direction for a new element
+  const hint=$('#fbHint');
+  if(hint){
+    if(kind&&kind.startsWith('cannon'))
+      hint.innerHTML='Pick projectile, shot speed, fire rate &amp; firing direction, then <b>Use this — paint it</b> and paint the cannons. Every painted cannon carries its own config — <b>independent per block</b>.';
+    else if(mech==='mace')
+      hint.innerHTML='One parametric trap — pick settings, then paint cells. Each distinct config claims a mace slot. <b>Build + playtest to confirm</b>.';
+    else if(mech==='variant')
+      hint.innerHTML='Pick a variant, then paint it onto the level.';
+    else hint.innerHTML='Pick settings, then paint it onto the level.';
+  }
+  if(mech==='fields'){if(changed){renderElemFields(p);if(hasVar)renderElemVariants(p);}
+    $('#fbBtn').textContent=p.enemy?'Apply projectile':'Use this — paint it';}
   else if(mech==='variant'){if(changed)renderElemVariants(p);}
   else $('#fbBtn').textContent='Use this — paint it';
 }
@@ -127,9 +143,17 @@ function renderElemFields(p){
 }
 function renderElemVariants(p){
   const box=$('#fbVariants');box.innerHTML='';
-  (p.variants||[]).forEach(v=>{
+  const pick=(p.mechanism==='fields'); // fields+variants (cannon): PICK a direction
+  (p.variants||[]).forEach((v,i)=>{
     const btn=document.createElement('button');btn.textContent=v.label;btn.className='accent';btn.style.cssText='margin:2px 4px 2px 0;width:auto';
-    btn.onclick=async()=>applyElementResult(await api().place_element(state.trapKind,{token:v.token}));
+    if(pick){
+      if(!state.elemCarrier&&i===0)state.elemCarrier=v.token; // default to the first direction
+      if(state.elemCarrier===v.token)btn.classList.add('sel');
+      btn.onclick=()=>{state.elemCarrier=v.token;ensureSprite(v.token);
+        box.querySelectorAll('button').forEach(b=>b.classList.remove('sel'));btn.classList.add('sel');};
+    }else{
+      btn.onclick=async()=>applyElementResult(await api().place_element(state.trapKind,{token:v.token}));
+    }
     box.appendChild(btn);
   });
 }
@@ -174,15 +198,28 @@ function isShooterEnemy(properties){
 // the totem boomeranger can only throw the boomerang (axe); other projectiles
 // don't work with its throw/return mechanic.
 const ENEMY_PROJECTILES={totemBoomeranger:['axe']};
+// Enemies that DO shoot (so they get shoot speed / fire rate) but can't change
+// WHAT they fire — hide the "shoots" projectile dropdown for them.
+const NO_PROJECTILE_SWAP=new Set(['ManholeMonster']);
 // Enemies that don't move — walk speed is meaningless, so hide it for them.
 const NON_WALKING_ENEMIES=new Set(['ManholeMonster']);
+// A cannon tile plugs into the SAME per-cell tuning as enemies (projectile / shoot
+// speed / fire rate) plus a firing direction — so clicking a placed cannon opens
+// the tuning panel and its config is stored per-cell (true per-block cannons).
+function isCannonToken(tok){const k=trapKindOf(String(tok||'').split('@')[0]);return !!(k&&k.startsWith('cannon'));}
+const CANNON_DIRS={'':null,right:[1,0],left:[-1,0],up:[0,1],down:[0,-1],
+  upright:[0.7071,0.7071],upleft:[-0.7071,0.7071],downright:[0.7071,-0.7071],downleft:[-0.7071,-0.7071]};
+// screen-clockwise angle of each direction, for rotating a cannon sprite to face it.
+const CANNON_ANGLE={right:0,downright:45,down:90,downleft:135,left:180,upleft:225,up:270,upright:315};
 function isWalkingEnemy(properties){
   return !NON_WALKING_ENEMIES.has(String(properties||'').split('@')[0]);
 }
 function renderEnemyTune(){
   const el=$('#enemyTunePanel');if(!el)return;
   const cell=state.selEnemyCell;
-  if(!cell||!state.chunk){el.hidden=true;return;}
+  // only while you're actually holding an enemy — switch to a block/other tool and
+  // this "THIS ENEMY ONLY" panel goes away.
+  if(!cell||!state.chunk||state.tool!=='enemy'){el.hidden=true;return;}
   el.hidden=false;
   // some enemies may only throw a specific projectile (e.g. the totem boomeranger
   // only throws the boomerang/axe); restrict its "shoots" list to those.
@@ -207,13 +244,21 @@ function renderEnemyTune(){
   $('#etFireMult').value=(rec.firemult==null?'1':String(rec.firemult));
   // shoot fields (shoots / shoot speed / fire rate) only apply to the shooting
   // enemies — hide them for everything else so the panel isn't misleading.
-  const shooter=isShooterEnemy(cell.properties);
+  const isCannon=isCannonToken(cell.properties);
+  const shooter=isShooterEnemy(cell.properties)||isCannon; // cannons tune like shooters
   el.querySelectorAll('.et-shoot').forEach(l=>l.hidden=!shooter);
-  // walk speed only for enemies that actually move (e.g. not the manhole monster)
-  const walks=isWalkingEnemy(cell.properties);
+  // some shooters can't change WHAT they fire (e.g. manhole monster) — keep their
+  // shoot speed / fire rate but hide the projectile dropdown. Cannons CAN swap.
+  const projLabel=$('#etProj').closest('label');
+  if(projLabel)projLabel.hidden=!shooter||NO_PROJECTILE_SWAP.has(_base);
+  // walk speed only for enemies that actually move (cannons/manhole don't)
+  const walks=isWalkingEnemy(cell.properties)&&!isCannon;
   el.querySelectorAll('.et-walk').forEach(l=>l.hidden=!walks);
+  // firing-direction control: cannons only. Reverse-map the stored vector to a word.
+  el.querySelectorAll('.et-cannon').forEach(l=>l.hidden=!isCannon);
+  if(isCannon){let dw='';for(const[k,v] of Object.entries(CANNON_DIRS)){if(v&&rec.dir_x===v[0]&&rec.dir_y===v[1]){dw=k;break;}}$('#etDir').value=dw;}
   // edits apply straight to the in-memory model — no per-enemy save button
-  $('#etProj').onchange=$('#etWalk').onchange=$('#etShootMult').onchange=$('#etFireMult').onchange=commitEnemyTuneLocal;
+  $('#etProj').onchange=$('#etWalk').onchange=$('#etShootMult').onchange=$('#etFireMult').onchange=$('#etDir').onchange=commitEnemyTuneLocal;
   renderAxeSettings(); // show the global axe-boomerang controls when this enemy throws the axe
   const id=tileLabel(cell.properties);
   $('#etInfo').textContent=`col ${cell.sx}, row ${cell.sy} · ${cell.properties||''}${id?` (${id})`:''}`;
@@ -253,6 +298,9 @@ function commitEnemyTuneLocal(){
   if(wk!==''&&parseFloat(wk)!==1)rec.walkmult=parseFloat(wk); // 1× = no change (multiplier)
   if(sm!==''&&parseFloat(sm)!==1)rec.shootmult=parseFloat(sm); // 1× = no change
   if(fm!==''&&parseFloat(fm)!==1)rec.firemult=parseFloat(fm);
+  // cannon firing direction → stored as a Vector2 the native side applies
+  const dv=$('#etDir')?$('#etDir').value:'';
+  if(dv&&CANNON_DIRS[dv]){rec.dir_x=CANNON_DIRS[dv][0];rec.dir_y=CANNON_DIRS[dv][1];}
   state.enemyTuning=state.enemyTuning||{};
   if(Object.keys(rec).length<=1)delete state.enemyTuning[key]; // only h -> nothing tuned
   else state.enemyTuning[key]=rec;
@@ -1332,8 +1380,25 @@ function enemyAt(c,r){return (state.chunk.enemies||[]).find(e=>Math.round(e.sx)=
 function removeEnemyAt(c,r){pruneEnemyTuning(c,r);state.chunk.enemies=(state.chunk.enemies||[]).filter(e=>!(Math.round(e.sx)===c&&Math.round(e.sy)===r));}
 
 function applyPaint(c,r){
-  if(state.tool==='paint'){const tok=joinTok(state.selTile,state.rot);setCell(c,r,tok);ensureSprite(tok);}
-  else if(state.tool==='erase'){setCell(c,r,'-');}
+  if(state.tool==='paint'){const tok=joinTok(state.selTile,state.rot);setCell(c,r,tok);ensureSprite(tok);
+    // a cannon painted with a brush carries its per-cell config (projectile / speed
+    // / rate / firing direction) onto this exact cell — true per-block cannons.
+    if(state.cannonBrush&&isCannonToken(tok)&&splitTok(tok)[0]===state.cannonBrush.token)
+      applyCannonBrush(c,r,state.cannonBrush.cfg);}
+  else if(state.tool==='erase'){setCell(c,r,'-');if(state.chunk&&state.enemyTuning)delete state.enemyTuning[etKey(c,r)];}
+}
+// write a cannon's per-cell config into the tuning table the build/native use.
+function applyCannonBrush(c,r,cfg){
+  const rec={h:state.chunk.h};
+  if(cfg.projectile)rec.projectile=cfg.projectile;
+  if(cfg.shootmult!=null&&cfg.shootmult!==1)rec.shootmult=cfg.shootmult;
+  if(cfg.firemult!=null&&cfg.firemult!==1)rec.firemult=cfg.firemult;
+  const d=CANNON_DIRS[cfg.direction];if(d){rec.dir_x=d[0];rec.dir_y=d[1];}
+  // placed shooting point (sprite editor) for this cannon+direction, base-frame
+  if(cfg.muzzle_x!=null&&cfg.muzzle_y!=null){rec.muzzle_x=cfg.muzzle_x;rec.muzzle_y=cfg.muzzle_y;}
+  state.enemyTuning=state.enemyTuning||{};
+  if(Object.keys(rec).length<=1)delete state.enemyTuning[etKey(c,r)]; // nothing set
+  else state.enemyTuning[etKey(c,r)]=rec;
 }
 // rotate the tile under the cursor by ±90° (and remember it as the brush rotation)
 function rotateCell(c,r,delta){
@@ -1353,7 +1418,19 @@ function updateSelInfo(){const id=tileLabel(state.selTile);const sn=$('#selName'
 // tiles/sprite_overrides.json — persisted and applied to the editor permanently.
 // keep the @<angle> on the token so EACH rotation gets its own sprite fix (the
 // resolver stores overrides per full token). Enemies have no @angle variants.
-function devToken(){return state.tool==='enemy'?state.selEnemy:state.selTile;}
+function cannonBaseDir(base){const p=(ELEM_PANELS&&ELEM_PANELS[trapKindOf(String(base||'').split('@')[0])])||{};return p.base_dir||'right';}
+function devToken(){
+  const sel=state.tool==='enemy'?state.selEnemy:state.selTile;
+  // cannons: the sprite fix (draw anchor + muzzle) is per FIRING DIRECTION — target
+  // the token rotated to the chosen direction, so each orientation keeps its own
+  // anchor override (base@<rot>, exactly how that direction is painted).
+  if(state.dev&&isCannonToken(sel)){
+    const b=splitTok(String(sel))[0];
+    const rot=((CANNON_ANGLE[state.mzDir]||0)-(CANNON_ANGLE[cannonBaseDir(b)]||0)+360)%360;
+    return joinTok(b,rot);
+  }
+  return sel;
+}
 async function setDevMode(on){
   state.dev=on; $('#devPanel').hidden=!on;
   if(on){
@@ -1365,6 +1442,7 @@ async function setDevMode(on){
         // list doesn't lag the panel; the ▦ Browse picker covers the full roster.
         $('#devArtList').innerHTML=names.slice(0,1500).map(n=>`<option value="${n}">`).join('');}catch(e){}
     }
+    state.devView={zoom:1,ox:0,oy:0}; // start the preview camera centred
     state.devTok=devToken();ensureSprite(state.devTok);syncDev();
   }else if(state.devArtPick){devArtPick(false);}
   draw();
@@ -1419,6 +1497,7 @@ function syncDev(){
   $('#devPy').value=$('#devPyN').value=py;
   $('#devOx').value=ox; $('#devOy').value=oy;
   $('#devArt').value=((state.devOverrides[tok]||{}).art)||'';
+  syncMuzzlePanel();
   drawDevPreview();
 }
 // read the dev inputs into an override-shaped object. arrow is degrees OR a
@@ -1523,20 +1602,34 @@ function loadRecInto(tok,rec,then){
 }
 // preview: the sprite placed in a 3×3 cell reference, with the cell-origin
 // crosshair (where the pivot lands), its draw-box, and the arrow/spin marker.
+// preview camera: a cell is baseZ px at zoom 1; pan (ox,oy) shifts the cell centre.
+// x0,y0 = placed-cell top-left; cx,cy = its centre. Shared by draw + muzzle math so
+// panning/zooming keeps the marker locked to the sprite.
+function devViewGeom(){
+  const c=$('#devPrev');const W=c.width,H=c.height;
+  const baseZ=Math.floor(Math.min(W,H)/3);
+  const V=state.devView||{zoom:1,ox:0,oy:0};
+  const Z=baseZ*V.zoom, cx=W/2+V.ox, cy=H/2+V.oy;
+  return {W,H,baseZ,Z,cx,cy,x0:cx-Z/2,y0:cy-Z/2};
+}
 function drawDevPreview(){
   const cvp=$('#devPrev');if(!cvp)return;const p=cvp.getContext('2d');
   const W=cvp.width,H=cvp.height;p.clearRect(0,0,W,H);p.imageSmoothingEnabled=false;
-  const Z=Math.floor(Math.min(W,H)/3), x0=Z, y0=Z; // origin cell = middle of 3×3
+  const g=devViewGeom(),Z=g.Z,x0=g.x0,y0=g.y0; // camera-aware cell geometry
   p.strokeStyle='rgba(255,255,255,.10)';p.lineWidth=1;
-  for(let i=0;i<=3;i++){p.beginPath();p.moveTo(i*Z+.5,0);p.lineTo(i*Z+.5,3*Z);p.stroke();
-    p.beginPath();p.moveTo(0,i*Z+.5);p.lineTo(3*Z,i*Z+.5);p.stroke();}
+  for(let x=x0-Math.ceil(x0/Z)*Z;x<=W;x+=Z){const xr=Math.round(x)+.5;p.beginPath();p.moveTo(xr,0);p.lineTo(xr,H);p.stroke();}
+  for(let y=y0-Math.ceil(y0/Z)*Z;y<=H;y+=Z){const yr=Math.round(y)+.5;p.beginPath();p.moveTo(0,yr);p.lineTo(W,yr);p.stroke();}
   p.strokeStyle='rgba(86,194,113,.5)';p.strokeRect(x0+.5,y0+.5,Z,Z); // placed cell
   const rec=state.devTok&&sprites[state.devTok];
   if(rec&&rec.img){
     const v=devVals(),z=Z/CELL;
     const dx=x0+(v.ox||0)*Z-(v.px||0)*rec.w*z;
     const dy=y0+(v.oy||0)*Z-(1-(v.py==null?1:v.py))*rec.h*z;
-    const pvx=x0+(v.ox||0)*Z, pvy=y0+(v.oy||0)*Z, rot=v.rot||0;
+    const pvx=x0+(v.ox||0)*Z, pvy=y0+(v.oy||0)*Z;
+    let rot=v.rot||0;
+    if(mzActive()){ // muzzle mode: rotate the cannon sprite to face the chosen direction
+      rot=((CANNON_ANGLE[state.mzDir]||0)-(CANNON_ANGLE[mzBaseDir()]||0)+360)%360;
+    }
     p.save();
     if(rot){p.translate(pvx,pvy);p.rotate(rot*Math.PI/180);p.translate(-pvx,-pvy);}
     p.drawImage(rec.img,dx,dy,rec.w*z,rec.h*z);
@@ -1548,7 +1641,73 @@ function drawDevPreview(){
   }
   p.strokeStyle='#ff5a5a';p.lineWidth=1; // cell-origin crosshair (pivot target)
   p.beginPath();p.moveTo(x0-4,y0);p.lineTo(x0+4,y0);p.moveTo(x0,y0-4);p.lineTo(x0,y0+4);p.stroke();
+  if(mzActive())drawMuzzleMarker(p); // cannon shooting-point marker (draggable)
 }
+
+// ---- cannon shooting-point (muzzle) editor: per token+direction, drag on #devPrev ----
+// The stored value is base-frame (forward, up) in world units; the native re-rotates
+// it by the chosen aim, so one drag on the rotated sprite maps to that direction only.
+function mzActive(){return state.dev&&isCannonToken(state.devTok);}
+function mzBase(){return splitTok(String(state.devTok||''))[0];}
+function mzBaseDir(){return cannonBaseDir(mzBase());}
+function mzGet(dir){return (state.cannonMuzzles[mzBase()]||{})[dir]||null;}
+async function mzSet(dir,fwd,up){const t=mzBase();
+  state.cannonMuzzles[t]=state.cannonMuzzles[t]||{};state.cannonMuzzles[t][dir]=[fwd,up];
+  try{await api().set_cannon_muzzle(t,dir,fwd,up);}catch(e){}}
+async function mzClearDir(dir){const t=mzBase();
+  if(state.cannonMuzzles[t]){delete state.cannonMuzzles[t][dir];
+    if(!Object.keys(state.cannonMuzzles[t]).length)delete state.cannonMuzzles[t];}
+  try{await api().clear_cannon_muzzle(t,dir);}catch(e){}}
+// stored base-frame (forward,up) -> world offset for `dir` (default: 10u out the barrel)
+function mzWorld(dir){const m=mzGet(dir),d=CANNON_DIRS[dir]||[1,0];
+  if(!m)return [d[0]*10,d[1]*10];
+  return [m[0]*d[0]-m[1]*d[1], m[0]*d[1]+m[1]*d[0]];}
+function mzGeom(){const g=devViewGeom();return {Z:g.Z,cx:g.cx,cy:g.cy};}
+function mzMarkerXY(){const g=mzGeom(),w=mzWorld(state.mzDir);
+  return [g.cx+(w[0]/CELL)*g.Z, g.cy-(w[1]/CELL)*g.Z];}
+// canvas pixel -> base-frame (forward,up) for the current dir (inverse-rotate by dir)
+function mzPixToBase(mx,my){const g=mzGeom(),d=CANNON_DIRS[state.mzDir]||[1,0];
+  const wx=((mx-g.cx)/g.Z)*CELL, wy=-((my-g.cy)/g.Z)*CELL;
+  return [wx*d[0]+wy*d[1], -wx*d[1]+wy*d[0]];}
+function drawMuzzleMarker(p){const xy=mzMarkerXY(),mx=xy[0],my=xy[1];
+  p.save();p.strokeStyle='#39d0ff';p.fillStyle='rgba(57,208,255,.22)';p.lineWidth=1.5;
+  p.beginPath();p.arc(mx,my,6,0,7);p.fill();p.stroke();
+  p.beginPath();p.moveTo(mx-9,my);p.lineTo(mx+9,my);p.moveTo(mx,my-9);p.lineTo(mx,my+9);p.stroke();
+  p.restore();}
+function syncMuzzlePanel(){
+  const on=mzActive();const host=$('#devMuzzle');if(host)host.hidden=!on;if(!on)return;
+  const sel=$('#devMzDir');
+  if(sel&&!sel._built){sel.innerHTML=Object.keys(CANNON_ANGLE).map(d=>`<option value="${d}">${d}</option>`).join('');sel._built=true;}
+  if(!Object.keys(CANNON_ANGLE).includes(state.mzDir))state.mzDir=mzBaseDir();
+  if(sel)sel.value=state.mzDir;
+  const m=mzGet(state.mzDir);
+  const f=$('#devMzF'),u=$('#devMzU');if(f)f.value=m?m[0]:'';if(u)u.value=m?m[1]:'';
+}
+// map a pointer event on #devPrev to canvas-pixel coords (accounts for CSS scaling)
+function mzEventPix(e){const c=$('#devPrev'),r=c.getBoundingClientRect();
+  return [ (e.clientX-r.left)*(c.width/r.width), (e.clientY-r.top)*(c.height/r.height) ];}
+function mzApplyMarker(pix){const b=mzPixToBase(pix[0],pix[1]);
+  state.cannonMuzzles[mzBase()]=state.cannonMuzzles[mzBase()]||{};
+  state.cannonMuzzles[mzBase()][state.mzDir]=[Math.round(b[0]*10)/10,Math.round(b[1]*10)/10];
+  syncMuzzlePanel();drawDevPreview();}
+// pointerdown: grab the 🎯 if we hit it, otherwise pan the preview camera
+function mzPointerDown(e){if(!state.dev)return;const pix=mzEventPix(e);
+  if(mzActive()){const m=mzMarkerXY();
+    if(Math.hypot(pix[0]-m[0],pix[1]-m[1])<=12){state.mzDrag='marker';mzApplyMarker(pix);return;}}
+  state.mzDrag='pan';state._panStart=[pix[0],pix[1],state.devView.ox,state.devView.oy];}
+function mzPointerMove(e){if(!state.mzDrag)return;const pix=mzEventPix(e);
+  if(state.mzDrag==='marker'){mzApplyMarker(pix);}
+  else{const s=state._panStart;state.devView.ox=s[2]+(pix[0]-s[0]);state.devView.oy=s[3]+(pix[1]-s[1]);drawDevPreview();}}
+function mzPointerUp(){if(!state.mzDrag)return;const was=state.mzDrag;state.mzDrag=false;
+  if(was==='marker'){const m=mzGet(state.mzDir);if(m){mzSet(state.mzDir,m[0],m[1]);setStatus('shooting point saved · '+state.mzDir);}}}
+// wheel: zoom the preview around the cursor (keeps the point under it fixed)
+function mzWheel(e){if(!state.dev)return;e.preventDefault();
+  const pix=mzEventPix(e),V=state.devView,g=devViewGeom();
+  const nz=Math.min(8,Math.max(0.4,V.zoom*(e.deltaY<0?1.15:1/1.15))),k=nz/V.zoom;
+  V.ox=(pix[0]-g.W/2)-k*((pix[0]-g.W/2)-V.ox);
+  V.oy=(pix[1]-g.H/2)-k*((pix[1]-g.H/2)-V.oy);
+  V.zoom=nz;drawDevPreview();}
+function mzResetView(){state.devView={zoom:1,ox:0,oy:0};drawDevPreview();}
 function fillRect(sel,token){const s=normSel(sel);const g=ensureLayer(state.layer);
   for(let r=s.y0;r<=s.y1;r++)for(let c=s.x0;c<=s.x1;c++)if(inBounds(c,r))g[r][c]=token;}
 function copyRegion(){if(!state.sel)return;const s=normSel(state.sel),g=layerGrid(state.layer)||[];
@@ -1753,8 +1912,13 @@ function onDown(e){
     if(ex){ selectEnemyCell(ex);
             if(e.shiftKey){snapshot();ex.properties=state.selEnemy;ensureSprite(state.selEnemy);draw();} // shift-click = retype
             else startEnemyDrag(ex); } // click = move + open tuning
-    else{snapshot();const ne={sx:c,sy:r,properties:state.selEnemy};state.chunk.enemies.push(ne);
-          ensureSprite(state.selEnemy);selectEnemyCell(ne);draw();} // enemy layer only — the spawn marker is added into `active` at build (to_xml), so the block underneath is preserved
+    else{
+      // clicking a placed CANNON tile opens its per-cannon tuning (projectile /
+      // speed / rate / direction) instead of dropping an enemy on top of it.
+      const g=state.chunk.grid,tile=g&&g[r]&&g[r][c];
+      if(tile&&tile!=='-'&&isCannonToken(tile)){selectEnemyCell({sx:c,sy:r,properties:splitTok(tile)[0]});draw();return;}
+      snapshot();const ne={sx:c,sy:r,properties:state.selEnemy};state.chunk.enemies.push(ne);
+      ensureSprite(state.selEnemy);selectEnemyCell(ne);draw();} // enemy layer only — the spawn marker is added into `active` at build (to_xml), so the block underneath is preserved
     return;
   }
   if(state.tool==='rect'){state.sel={x0:c,y0:r,x1:c,y1:r};state.drag={rect:true};draw();return;}
@@ -2299,15 +2463,34 @@ const ACTIONS={
   async pickFirebar(){
     const kind=state.trapKind;if(!kind)return;
     const p=ELEM_PANELS[kind]||{};let settings={};
+    if(p.percell){
+      // cannon: the base sprite ROTATED to face the chosen direction, carrying its
+      // projectile / speed / rate / firing-direction as a per-cell brush.
+      const tok=(p.carriers&&p.carriers[0]);
+      const cfg={};
+      $('#fbFields').querySelectorAll('input,select').forEach(inp=>{
+        cfg[inp.dataset.key]=inp.dataset.ftype==='select'?inp.value:(+inp.value);});
+      const dir=cfg.direction||p.base_dir||'right';
+      state.rot=((CANNON_ANGLE[dir]||0)-(CANNON_ANGLE[p.base_dir||'right']||0)+360)%360; // rotate sprite to face `dir`
+      // bake this cannon+direction's placed shooting point (sprite editor) into the brush
+      const mz=(state.cannonMuzzles&&state.cannonMuzzles[tok]&&state.cannonMuzzles[tok][dir]);
+      if(mz){cfg.muzzle_x=mz[0];cfg.muzzle_y=mz[1];}
+      state.cannonBrush={token:tok,cfg};
+      state.selTile=tok;ensureSprite(tok);setTool('paint');updateSelInfo();
+      setStatus('cannon ready — paint it; each one keeps this projectile / speed / direction');
+      return;
+    }
     if(p.mechanism==='mace'){
       const mode=$('#fbDir').value,circular=(mode==='cw'||mode==='ccw');
       // spin: cw/ccw = direction. swing: start left/right = which way it sets off.
       settings={length:+$('#fbLen').value||3,start:$('#fbStart').value,
         clockwise:(mode==='cw'||mode==='swingL'),double:$('#fbDouble').checked,circular};
     }else if(p.mechanism==='fields'){
-      // enemy projectile panels attach the override to the SELECTED enemy token
-      // (__carrier__); trap panels keep the chosen sprite/tile as the carrier.
+      // enemy projectile panels attach the override to the SELECTED enemy token;
+      // cannon panels attach to the picked DIRECTION tile (__carrier__ keeps its
+      // baked sprite/direction); other trap panels use the chosen sprite/tile.
       if(p.enemy)settings.__carrier__=String(state.selEnemy||'').split('@')[0];
+      else if(p.variants&&p.variants.length)settings.__carrier__=state.elemCarrier||p.variants[0].token;
       else settings.token=String(state.selTile||'').split('@')[0];
       $('#fbFields').querySelectorAll('input,select').forEach(inp=>{
         settings[inp.dataset.key]=inp.dataset.ftype==='bool'?inp.checked
@@ -2395,7 +2578,8 @@ const ACTIONS={
     if(d)await api().lock_date(d);
     else if(!c){setStatus('pick a date (or open a chunk) first',true);return;}
     setStatus('playtest: building '+(d||'')+' → installing → launching into your level… (~30s)');
-    const r=await api().playtest(c||null);
+    const tun=c?chunkTunings(c.name):null; // per-cell tuning (enemy + cannon) rides with the chunk
+    const r=await api().playtest(c||null,tun);
     if(r.error){setStatus('playtest failed: '+r.error,true);$('#logOut').textContent=(r.log||[]).join('\n')+'\n\nERROR: '+r.error;$('#logModal').classList.remove('hidden');}
     else setStatus('▶ playing '+(r.force_date||'your level')+' — climb to reach your injected chunks');},
   undo(){undo();}, redo(){redo();},
@@ -2418,6 +2602,9 @@ const ACTIONS={
       loadRecInto(tok,r.rec,()=>{syncDev();draw();syncSpriteViews();});
       setStatus('reset '+tok+' to automatic placement');}
     else setStatus((r&&r.error)||'could not reset',true);},
+  async devMzClear(){if(!mzActive())return;await mzClearDir(state.mzDir);
+    syncMuzzlePanel();drawDevPreview();setStatus('reset '+state.mzDir+' to the default muzzle');},
+  devMzView(){mzResetView();setStatus('view reset');},
   async devShootSave(){const bakes=collectShootBakes();
     const r=await api().save_shoot_bakes(bakes);
     if(r&&!r.error){state.shootBakes=r||{};renderShootBakes();
@@ -2493,6 +2680,7 @@ function applyState(st){$('#projName').value=st.project_name||'';updateEdited(st
   if(st.flag_checkpoints!==undefined)$('#flagCheckpoints').checked=!!st.flag_checkpoints;
   if(st.firebars)state.firebars=st.firebars;
   if(st.enemy_tuning)state.enemyTuning=st.enemy_tuning;
+  if(st.cannon_muzzles)state.cannonMuzzles=st.cannon_muzzles;
   if(st.axe)state.axe=st.axe;
   if(st.projectiles)state.projectiles=st.projectiles;
   if(st.shoot_bakes)state.shootBakes=st.shoot_bakes;
@@ -2528,7 +2716,7 @@ function setTool(t){
   // enemy layer -> grid 1. Set .checked directly so we don't re-fire the radio handler.
   if(t==='enemy'){selectLayerRadio('enemy');state.layer='enemy';}
   else if(state.layer==='enemy'){selectLayerRadio('active');state.layer='active';}
-  cv.style.cursor=t==='pan'?'grab':(t==='eyedrop'?'cell':'crosshair');updateFirebarPanel();if(state.dev)syncDev();draw();}
+  cv.style.cursor=t==='pan'?'grab':(t==='eyedrop'?'cell':'crosshair');updateFirebarPanel();renderEnemyTune();if(state.dev)syncDev();draw();}
 function wire(){
   $$('[data-act]').forEach(b=>b.onclick=()=>ACTIONS[b.dataset.act]&&ACTIONS[b.dataset.act]());
   $$('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
@@ -2660,6 +2848,18 @@ function wire(){
   $('#devArt').onchange=devPreviewArt;
   $('#devArtBrowse').onclick=openArtPicker;
   $('#devArtPick').onclick=()=>devArtPick();
+  // cannon shooting-point (muzzle) editor
+  if($('#devMzDir'))$('#devMzDir').onchange=e=>{state.mzDir=e.target.value;
+    ensureSprite(devToken());syncDev();}; // reloads anchor fields for the new direction's token
+  const mzNum=()=>{const f=parseFloat($('#devMzF').value),u=parseFloat($('#devMzU').value);
+    if(isNaN(f)||isNaN(u))return;mzSet(state.mzDir,f,u);drawDevPreview();};
+  if($('#devMzF'))$('#devMzF').oninput=mzNum; if($('#devMzU'))$('#devMzU').oninput=mzNum;
+  if($('#devPrev')){const c=$('#devPrev');
+    c.addEventListener('pointerdown',e=>{if(state.dev){e.preventDefault();c.setPointerCapture&&c.setPointerCapture(e.pointerId);mzPointerDown(e);}});
+    c.addEventListener('pointermove',mzPointerMove);
+    window.addEventListener('pointerup',mzPointerUp);
+    c.addEventListener('wheel',mzWheel,{passive:false});
+    c.addEventListener('dblclick',()=>{if(state.dev){mzResetView();setStatus('view reset');}});}
   $('#artSearch').oninput=()=>{clearTimeout(_artTimer);_artTimer=setTimeout(renderArtGrid,140);};
   $('#artSearch').onkeydown=e=>{if(e.key==='Escape')closeArtPicker();};
   $('#artModal').onclick=e=>{if(e.target.id==='artModal')closeArtPicker();};

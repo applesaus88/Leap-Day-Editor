@@ -287,7 +287,10 @@ def serialize_config(enemy_tuning: dict[str, dict],
         # the native side keeps its defaults (16 forward, 6 up).
         mx = val.get("muzzle_x"); mx = float(mx) if mx not in (None, "") else ""
         my = val.get("muzzle_y"); my = float(my) if my not in (None, "") else ""
-        lines.append(f"t|{chunk}|{sx}|{row}|{proj}|{health}|{walk!r}|{sm!r}|{fm!r}|{wm!r}|{mx}|{my}")
+        # cannon firing direction (Vector2). Blank -> "" so the native side leaves it.
+        dx = val.get("dir_x"); dx = float(dx) if dx not in (None, "") else ""
+        dy = val.get("dir_y"); dy = float(dy) if dy not in (None, "") else ""
+        lines.append(f"t|{chunk}|{sx}|{row}|{proj}|{health}|{walk!r}|{sm!r}|{fm!r}|{wm!r}|{mx}|{my}|{dx}|{dy}")
         n += 1
     for bkey, spd in sorted((shoot_bakes or {}).items()):
         try:

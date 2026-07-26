@@ -31,6 +31,9 @@
  * variables used only inside LOG(...) don't warn, and the dead call is removed. */
 #define LOG(...) do { if (0) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__); } while (0)
 #endif
+/* ALWAYS-ON log (works in release too) — used only for the temporary cannon
+ * diagnostic so it can be seen without a special debug build. Remove when done. */
+#define CLOG(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 
 /* ---- runtime tuning table -------------------------------------------------- *
  * The per-mod tuning table used to be baked into this .so at compile time (an old
@@ -59,6 +62,7 @@ typedef struct {
     float       walkmult;    /* walk-speed multiplier (1 = leave, 0 = frozen) */
     float       muzzle_x;    /* projectile spawn offset FORWARD (facing dir), units. default 16 */
     float       muzzle_y;    /* projectile spawn offset UP, units. default 6 (raise for big/low projectiles) */
+    float       dir_x, dir_y;/* cannon firing direction (Vector2); dir_x <= -900 = leave */
 } EnemyTune;
 typedef struct {
     const char* cls;         /* enemy class          */
@@ -152,6 +156,8 @@ static void load_config(void) {
             char* f_wm = cfg_field(&r);    /* walkmult — absent in old configs -> NULL */
             char* f_mx = cfg_field(&r);    /* muzzle_x/_y — absent in old configs -> NULL (defaults) */
             char* f_my = cfg_field(&r);
+            char* f_dx = cfg_field(&r);    /* cannon direction x/y — absent in old configs -> leave */
+            char* f_dy = cfg_field(&r);
             if (f_chunk && f_col && f_row && g_ntunes < MAX_TUNES) {
                 EnemyTune* t = &g_tunes[g_ntunes++];
                 t->chunk = f_chunk;
@@ -163,8 +169,10 @@ static void load_config(void) {
                 t->shootmult = f_sm ? (float)atof(f_sm) : 1.0f;
                 t->firemult  = f_fm ? (float)atof(f_fm) : 1.0f;
                 t->walkmult  = f_wm ? (float)atof(f_wm) : 1.0f;
-                t->muzzle_x  = (f_mx && f_mx[0]) ? (float)atof(f_mx) : 16.0f;  /* default forward 16 */
-                t->muzzle_y  = (f_my && f_my[0]) ? (float)atof(f_my) : 6.0f;   /* default up 6 */
+                t->muzzle_x  = (f_mx && f_mx[0]) ? (float)atof(f_mx) : -1000.0f; /* unset -> keep authored m_Offset */
+                t->muzzle_y  = (f_my && f_my[0]) ? (float)atof(f_my) : -1000.0f;
+                t->dir_x = (f_dx && f_dx[0]) ? (float)atof(f_dx) : -1000.0f;   /* leave */
+                t->dir_y = (f_dy && f_dy[0]) ? (float)atof(f_dy) : 0.0f;
             }
         } else if (line[0] == 'b' && line[1] == '|') {
             char* r = line + 2;
@@ -287,8 +295,13 @@ typedef struct {
     const char* f_parent;    /* chunk GameObject field, or NULL     */
     const char* f_shotspeed; /* float launch-speed field, or NULL   */
     const char* f_firerate;  /* float fire-rate/cooldown field, or NULL */
+    const char* f_direction; /* Vector2 firing-direction field (cannons), or NULL */
+    const char* f_startdir;  /* Vector2 cached start-direction field (cannons), or NULL */
+    const char* f_offset;    /* Vector2 base muzzle offset (cannons), or NULL */
+    const char* f_rotoffset; /* Vector2 rotated muzzle offset (cannons), or NULL */
     Il2CppClass* klass;
-    size_t o_proj, o_walk, o_health, o_parent, o_shotspeed, o_firerate;
+    size_t o_proj, o_walk, o_health, o_parent, o_shotspeed, o_firerate, o_direction, o_startdir,
+           o_offset, o_rotoffset;
     int last_n;              /* last live count, for change-triggered heartbeat */
 } TuneClass;
 
@@ -315,6 +328,11 @@ static TuneClass g_tc[] = {
     {"EnemyAnimSkullSoldier", "arrowPrefab",    NULL, "health", NULL, NULL, NULL},
     {"MotherBlob",            "smallBlopPrefab",NULL, "health", NULL, NULL, NULL},
     {"Worm",                  "fly",            NULL, "health", NULL, NULL, NULL},
+    /* Cannons are traps, not enemies, but they shoot the same way: m_Prefab is the
+     * projectile, m_Speed the launch speed, m_Frequency the fire cadence. They are
+     * transform-children of their chunk (f_parent=NULL -> transform.parent), so the
+     * SAME per-cell pump tunes each placed cannon independently (true per-block). */
+    {"Cannon",                "m_Prefab",       NULL, NULL,     NULL, "m_Speed", "m_Frequency", "m_Direction", "m_StartingDir", "m_Offset", "m_RotatedOffset"},
 };
 #define NTC (int)(sizeof(g_tc)/sizeof(g_tc[0]))
 
@@ -375,6 +393,13 @@ static int obj_position(Il2CppObject* o, float* xyz) {
     float* v = (float*)((char*)boxed + 0x10);
     xyz[0]=v[0]; xyz[1]=v[1]; xyz[2]=v[2]; return 1;
 }
+/* The GameObject of o's transform PARENT (its chunk, for tiles like cannons that
+ * are transform-children of the chunk). NULL if it has no parent. */
+static Il2CppObject* obj_parent_go(Il2CppObject* o) {
+    Il2CppObject* tr = invoke0(o, "get_transform"); if (!tr) return NULL;
+    Il2CppObject* par = invoke0(tr, "get_parent");   if (!par) return NULL;
+    return invoke0(par, "get_gameObject");
+}
 /* set world position: Transform.set_position(Vector3) — a 12-byte value type is
  * passed to runtime_invoke as a pointer to its three floats. */
 static int obj_set_position(Il2CppObject* o, float x, float y, float z) {
@@ -386,6 +411,13 @@ static int obj_set_position(Il2CppObject* o, float x, float y, float z) {
     void* args[1] = { v };
     il2cpp_runtime_invoke(m, tr, args, NULL);
     return 1;
+}
+/* world lossyScale (x,y,z) via the object's Transform — for diagnosing sprite size */
+static int obj_localscale(Il2CppObject* o, float* xyz) {
+    Il2CppObject* tr = invoke0(o, "get_transform"); if (!tr) return 0;
+    Il2CppObject* boxed = invoke0(tr, "get_lossyScale"); if (!boxed) return 0;
+    float* v = (float*)((char*)boxed + 0x10);
+    xyz[0]=v[0]; xyz[1]=v[1]; xyz[2]=v[2]; return 1;
 }
 /* A UnityEngine.Object whose native peer has been destroyed still lingers as a
  * managed wrapper (FindObjectsOfTypeAll returns it), but its m_CachedPtr (the
@@ -480,6 +512,20 @@ static int enemy_cell(Il2CppObject* e, const TuneClass* tc, char* base, int cap,
         char full[96]; obj_name(pc, full, sizeof full); chunk_basename(full, base, cap);
         float cp[3]; if (!obj_position(pc, cp)) return 0;
         ox = cp[0]; oy = cp[1];
+    } else if (strcmp(tc->cls, "Cannon") == 0) {
+        /* cannons are transform-children of their chunk: read the parent directly
+         * (the world-Y registry can pick the wrong chunk for a trap). */
+        Il2CppObject* pc = obj_parent_go(e);
+        if (unity_alive(pc)) {
+            char full[96]; obj_name(pc, full, sizeof full); chunk_basename(full, base, cap);
+            float cp[3]; if (!obj_position(pc, cp)) return 0;
+            ox = cp[0]; oy = cp[1];
+        } else {
+            const ChunkReg* cr = chunk_for_pos(ew[1]);
+            if (!cr) return 0;
+            strncpy(base, cr->name, cap - 1); base[cap - 1] = 0;
+            ox = cr->ox; oy = cr->oy;
+        }
     } else {
         const ChunkReg* cr = chunk_for_pos(ew[1]);
         if (!cr) return 0;
@@ -571,7 +617,12 @@ static int resolve_findall(void) {
     if (g_resClass) g_findAll = il2cpp_class_get_method_from_name(g_resClass, "FindObjectsOfTypeAll", 1);
     return g_findAll != NULL;
 }
-#define NSNAP 24
+/* Snapshot slots: one per distinct class we enumerate (all g_tc entries +
+ * PUMP_CLASSES + dynamically-registered projectile/homing classes). This must
+ * comfortably exceed the total — if it fills, a class registered LATE (e.g. the
+ * Cannon g_tc entry) silently gets no slot and is never enumerated/tuned, which
+ * shows up as intermittent "cannons don't respond". Keep generous headroom. */
+#define NSNAP 48
 typedef struct { Il2CppClass* k; Il2CppObject* buf[MAXE]; int n; int valid; } Snap;
 static Snap g_snap[NSNAP]; static int g_nsnap;
 static pthread_mutex_t g_snaplock = PTHREAD_MUTEX_INITIALIZER;
@@ -660,6 +711,31 @@ static void apply_tune(Il2CppObject* e, const EnemyTune* t, const TuneClass* tc)
         LOG("proj set '%s' on %s: resolved=%p old=%p(%s)",
             t->projectile, tc->cls, proj, old, on);
 #endif
+    }
+    /* Cannon firing direction (Vector2). Set both the live m_Direction and the
+     * cached m_StartingDir so the aim sticks regardless of which the fire code
+     * reads. Idempotent, so re-applying each pump pass is harmless. */
+    if (t->dir_x > -900.0f && tc->o_direction != (size_t)-1) {
+        *(float*)(p + tc->o_direction)     = t->dir_x;
+        *(float*)(p + tc->o_direction + 4) = t->dir_y;
+        if (tc->o_startdir != (size_t)-1) {
+            *(float*)(p + tc->o_startdir)     = t->dir_x;
+            *(float*)(p + tc->o_startdir + 4) = t->dir_y;
+        }
+        /* Move the muzzle to match the new firing direction: the game caches
+         * m_RotatedOffset (rotate(m_Offset, base_dir)) at Start, so rotating the
+         * cannon later leaves the spawn point behind. m_Offset is authored for the
+         * right-facing base, so we re-rotate it by dir's angle (dir = unit vector
+         * (cos, sin)), preserving the barrel's forward+up shape. */
+        if (tc->o_rotoffset != (size_t)-1 && tc->o_offset != (size_t)-1) {
+            /* base muzzle offset (forward, up), authored for the right-facing cannon.
+             * If the user placed a custom shooting point, use it; else keep the game's
+             * authored m_Offset. Then rotate it by dir so the spawn tracks the aim. */
+            float ox = (t->muzzle_x > -900.0f) ? t->muzzle_x : *(float*)(p + tc->o_offset);
+            float oy = (t->muzzle_y > -900.0f) ? t->muzzle_y : *(float*)(p + tc->o_offset + 4);
+            *(float*)(p + tc->o_rotoffset)     = ox * t->dir_x - oy * t->dir_y;
+            *(float*)(p + tc->o_rotoffset + 4) = ox * t->dir_y + oy * t->dir_x;
+        }
     }
     /* Launch speed + fire rate — applied ONCE per instance (repeated scaling each
      * poll would compound the field to zero/infinity). Independent of the projectile
@@ -932,6 +1008,7 @@ typedef void (*pump_fn)(void*, void*);
 static pump_fn g_pump_orig;
 static void main_thread_tick(void);
 static void process_vel_jobs(void);   /* universal projectile-velocity scaler (below) */
+static void rotate_bullets_pump(void);/* orient cannon shots to their firing direction (below) */
 static void process_anim_jobs(void);  /* animator speed-up for animation-locked throwers */
 static void pump_detect_axes(void);   /* detect+equip swapped-in axes, main-thread (below) */
 static void clear_projectiles_on_death(void); /* wipe fired projectiles on player death/respawn (below) */
@@ -2032,6 +2109,7 @@ static void main_thread_tick(void) {
     force_exact_respawn();                       /* pin the player to the exact 🟢 cell while respawning (every frame) */
     auto_respawn_tick();                          /* save spawn Y on any checkpoint hit; teleport there on death */
     process_vel_jobs();   /* scale fieldless-shooter projectiles (independent of homing) */
+    if (n % 2 == 0) rotate_bullets_pump();  /* orient cannon shots to their firing direction */
     process_anim_jobs();  /* speed up animation-locked throwers so they machine-gun       */
     if ((g_pump_calls & 1) == 0) defeat_shoot_cooldowns();  /* trunky (EnemyAnimShooting) fire rate */
     pump_detect_axes();   /* find fresh axes (main-thread collider scan), equip + launch  */
@@ -2128,6 +2206,7 @@ static Il2CppObject*   g_veldone[1024];  static int g_nveldone;  /* scaled / ign
 static pthread_mutex_t g_vlock = PTHREAD_MUTEX_INITIALIZER;
 static int g_want_velscale;
 static int g_want_axeboom;      /* an "axe" was tuned in -> spin + boomerang it */
+static int g_want_bulletrot;    /* a cannon has a firing DIRECTION -> orient its shots */
 
 /* animation-speed staging (definitions of the machine-gun-animator subsystem are
  * further down; declared here so velscale_reset can clear the job queue). */
@@ -2139,6 +2218,9 @@ static int g_want_animspeed;
 static Il2CppClass*      g_rbClass;    /* UnityEngine.Rigidbody2D                       */
 static const MethodInfo* g_mGetVel;    /* Rigidbody2D.get_velocity() -> Vector2         */
 static const MethodInfo* g_mSetVel;    /* Rigidbody2D.set_velocity(Vector2)             */
+static const MethodInfo* g_mSetRot;    /* Rigidbody2D.set_rotation(float) — 2D Z angle  */
+static const MethodInfo* g_mGetCon;    /* Rigidbody2D.get_constraints() -> enum         */
+static const MethodInfo* g_mSetCon;    /* Rigidbody2D.set_constraints(enum)             */
 
 static int class_has_bake(const char* cls) {
     for (int i = 0; i < g_nbakes; i++) if (strcmp(g_bakes[i].cls, cls) == 0) return 1;
@@ -2148,7 +2230,9 @@ static void velscale_init(void) {
     for (int i = 0; i < g_ntunes; i++)
         if (g_tunes[i].shootmult != 1.0f) g_want_velscale = 1;
     if (g_nbakes > 0) g_want_velscale = 1;   /* a bake can bite even at mult 1 */
-    LOG("velscale: want=%d", g_want_velscale);
+    for (int i = 0; i < g_ntunes; i++)       /* any cannon aim -> orient its bullets */
+        if (g_tunes[i].dir_x > -900.0f) g_want_bulletrot = 1;
+    LOG("velscale: want=%d bulletrot=%d", g_want_velscale, g_want_bulletrot);
 }
 static int velscale_api_ready(void) {
     if (g_mSetVel) return 1;
@@ -2669,6 +2753,150 @@ static void process_vel_jobs(void) {
     }
 }
 
+/* PUMP (main thread): orient each cannon's fired projectile so its sprite points
+ * where it flies. Cannons are excluded from the velocity-scaler path (they have a
+ * real m_Speed field), so their shots need their own tiny pass. Enumerate live
+ * Cannon instances (their m_Direction is the aim set in apply_tune), then rotate any
+ * fresh clone-projectile sitting at a cannon's muzzle to face that aim. Rotating each
+ * frame while the shot is near the muzzle is idempotent (fish bullets have no spin
+ * script); once it flies out of range it keeps the rotation. Main-thread only:
+ * FindObjectsOfTypeAll + get_transform are illegal off the main thread. */
+static void rotate_bullets_pump(void) {
+    if (!g_want_bulletrot) return;
+    if (!resolve_findall()) return;
+    const TuneClass* ctc = NULL;
+    for (int c = 0; c < NTC; c++) if (strcmp(g_tc[c].cls, "Cannon") == 0) { ctc = &g_tc[c]; break; }
+    if (!ctc || !ctc->klass || ctc->o_direction == (size_t)-1) return;
+
+    /* the m_SmokePuff field — resolved once — so we can EXCLUDE the smoke puff by
+     * name (the real projectile can have any name, so we don't require a match). */
+    static size_t o_smoke = (size_t)-2;
+    if (o_smoke == (size_t)-2) o_smoke = field_off(ctc->klass, "m_SmokePuff");
+
+    /* 1. gather live cannon muzzle positions + firing directions + the names of the
+     * projectile (m_Prefab) and the smoke puff (m_SmokePuff) each cannon uses. */
+    struct { float x, y, dx, dy; char proj[48], smoke[48]; } zn[64]; int nz = 0;
+    Il2CppObject* cty = il2cpp_type_get_object(il2cpp_class_get_type(ctc->klass));
+    if (!cty) return;
+    void* ca[1] = { cty };
+    Il2CppArray* carr = find_all_locked(g_findAll, ca);
+    if (!carr) return;
+    uintptr_t clen = *(uintptr_t*)((char*)carr + 0x18);
+    void** citems  = (void**)((char*)carr + 0x20);
+    for (uintptr_t i = 0; i < clen && nz < 64; i++) {
+        Il2CppObject* cn = (Il2CppObject*)citems[i];
+        if (!cn || !unity_alive(cn)) continue;
+        float cp[3]; if (!obj_position(cn, cp)) continue;
+        float dx = *(float*)((uint8_t*)cn + ctc->o_direction);
+        float dy = *(float*)((uint8_t*)cn + ctc->o_direction + 4);
+        if (dx == 0.0f && dy == 0.0f) continue;          /* no aim set */
+        zn[nz].x = cp[0]; zn[nz].y = cp[1]; zn[nz].dx = dx; zn[nz].dy = dy;
+        zn[nz].proj[0] = 0; zn[nz].smoke[0] = 0;
+        if (ctc->o_proj != (size_t)-1) {
+            Il2CppObject* pf = *(Il2CppObject**)((uint8_t*)cn + ctc->o_proj);
+            if (unity_alive(pf)) { char pn[96]; obj_name(pf, pn, sizeof pn);
+                chunk_basename(pn, zn[nz].proj, sizeof zn[nz].proj); }
+        }
+        if (o_smoke != (size_t)-1) {
+            Il2CppObject* sm = *(Il2CppObject**)((uint8_t*)cn + o_smoke);
+            if (unity_alive(sm)) { char sn[96]; obj_name(sm, sn, sizeof sn);
+                chunk_basename(sn, zn[nz].smoke, sizeof zn[nz].smoke); }
+        }
+        nz++;
+    }
+    if (nz == 0) return;
+    static long g_brdbg = 0; int hb = ((g_brdbg++ % 100) == 0);
+    if (hb) for (int z = 0; z < nz; z++)
+        CLOG("bulletrot cannon[%d] aim=(%.2f,%.2f) proj='%s' smoke='%s'",
+             z, (double)zn[z].dx, (double)zn[z].dy, zn[z].proj, zn[z].smoke);
+
+    /* 2. rotate clone projectiles sitting at a cannon muzzle to that cannon's aim */
+    if (!g_rbClass) g_rbClass = find_class("UnityEngine", "Rigidbody2D");
+    if (!g_rbClass) return;
+    if (!g_mSetRot) g_mSetRot = il2cpp_class_get_method_from_name(g_rbClass, "set_rotation", 1);
+    if (!g_mSetRot) return;   /* no 2D rotation setter -> skip (never clobber the sprite) */
+    if (!g_mGetVel) g_mGetVel = il2cpp_class_get_method_from_name(g_rbClass, "get_velocity", 0);
+    if (!g_mSetVel) g_mSetVel = il2cpp_class_get_method_from_name(g_rbClass, "set_velocity", 1);
+    if (!g_mGetCon) g_mGetCon = il2cpp_class_get_method_from_name(g_rbClass, "get_constraints", 0);
+    if (!g_mSetCon) g_mSetCon = il2cpp_class_get_method_from_name(g_rbClass, "set_constraints", 1);
+    Il2CppObject* rty = il2cpp_type_get_object(il2cpp_class_get_type(g_rbClass));
+    if (!rty) return;
+    void* ra[1] = { rty };
+    Il2CppArray* rarr = find_all_locked(g_findAll, ra);
+    if (!rarr) return;
+    uintptr_t rlen = *(uintptr_t*)((char*)rarr + 0x18);
+    void** ritems  = (void**)((char*)rarr + 0x20);
+    for (uintptr_t i = 0; i < rlen; i++) {
+        Il2CppObject* rb = (Il2CppObject*)ritems[i];
+        if (!rb || !unity_alive(rb)) continue;
+        Il2CppObject* go = invoke0(rb, "get_gameObject");
+        if (!unity_alive(go)) continue;
+        char full[96]; obj_name(go, full, sizeof full);
+        if (!strstr(full, "(Clone)")) continue;          /* only live shots */
+        char base[48]; chunk_basename(full, base, sizeof base);  /* strips " (Clone)" */
+        float p[3]; if (!obj_position(go, p)) continue;
+        /* log any clone loitering near a muzzle: its name + on-screen size, so we can
+         * see what the projectile actually is and why it looks small. */
+        if (hb) {
+            int nearAny = -1; float ba = 64.0f * 64.0f;
+            for (int z = 0; z < nz; z++) { float ex=p[0]-zn[z].x, ey=p[1]-zn[z].y, d=ex*ex+ey*ey; if (d<ba){ba=d;nearAny=z;} }
+            if (nearAny >= 0) { float sc[3]={1,1,1}; obj_localscale(go, sc);
+                CLOG("bulletrot clone '%s' scale=(%.2f,%.2f) d=%.0f nearProj='%s'",
+                     base, (double)sc[0], (double)sc[1], (double)sqrtf(ba), zn[nearAny].proj); }
+        }
+        /* nearest cannon muzzle — but NEVER the smoke puff (rotating/re-aiming that is
+         * what wrecked the puffs). Any other clone at the muzzle is the real shot. */
+        int best = -1; float bd = 40.0f * 40.0f;         /* within ~2.5 tiles of a muzzle */
+        for (int z = 0; z < nz; z++) {
+            if (zn[z].smoke[0] && strcmp(base, zn[z].smoke) == 0) continue;  /* it's the smoke puff */
+            float ddx = p[0]-zn[z].x, ddy = p[1]-zn[z].y, d = ddx*ddx + ddy*ddy;
+            if (d < bd) { bd = d; best = z; }
+        }
+        if (best < 0) continue;                          /* not a cannon shot at a muzzle */
+        float ax = zn[best].dx, ay = zn[best].dy;        /* the cannon's aim */
+        float al = sqrtf(ax*ax + ay*ay); if (al > 0.001f) { ax /= al; ay /= al; }
+        /* Some projectiles (e.g. the WoolyTrunky snowball, authored to fly LEFT)
+         * keep their own initial velocity and ignore the cannon's m_Direction, so
+         * they fly the wrong way. If a fresh shot is moving AGAINST the aim, re-aim
+         * it (same speed) so the cannon's direction is authoritative. Only flips
+         * clearly-wrong shots (dot < 0) — correctly-aimed/arcing shots are left be. */
+        if (g_mGetVel && g_mSetVel) {
+            Il2CppObject* bv = il2cpp_runtime_invoke(g_mGetVel, rb, NULL, NULL);
+            if (bv) {
+                float* vv = (float*)((char*)bv + 0x10);
+                float vx = vv[0], vy = vv[1], mag = sqrtf(vx*vx + vy*vy);
+                if (mag > 0.01f && (vx*ax + vy*ay) < 0.0f) {
+                    float nv[2] = { ax*mag, ay*mag }; void* va[1] = { nv };
+                    il2cpp_runtime_invoke(g_mSetVel, rb, va, NULL);
+                }
+            }
+        }
+        /* The bullet (e.g. BouncyBullet) freezes its Z rotation, so set_rotation is
+         * ignored by the physics engine — clear the FreezeRotation bit so our angle
+         * sticks. No torque acts on a bullet in flight, so it won't tumble. */
+        if (g_mGetCon && g_mSetCon) {
+            Il2CppObject* cb = il2cpp_runtime_invoke(g_mGetCon, rb, NULL, NULL);
+            if (cb) {
+                int con = *(int*)((char*)cb + 0x10);
+                if (con & 4) { con &= ~4;             /* RigidbodyConstraints2D.FreezeRotation */
+                    void* ca2[1] = { &con };
+                    il2cpp_runtime_invoke(g_mSetCon, rb, ca2, NULL);
+                }
+            }
+        }
+        /* The game faces the bullet by MIRRORING it left/right (scale.x < 0 for a
+         * leftward shot), not by rotating. A mirrored sprite's forward is -X, so add
+         * 180° to keep the nose pointing along the aim for every direction. */
+        float deg = atan2f(ay, ax) * (180.0f / 3.14159265f);
+        float sc[3] = {1,1,1}; obj_localscale(go, sc);
+        if (sc[0] < 0.0f) deg += 180.0f;
+        void* ra1[1] = { &deg };
+        il2cpp_runtime_invoke(g_mSetRot, rb, ra1, NULL);
+        if (hb) CLOG("bulletrot ROTATED '%s' -> %.0f deg (aim %.2f,%.2f, scaleX %.2f)",
+                     base, (double)deg, (double)ax, (double)ay, (double)sc[0]);
+    }
+}
+
 static void pump_install(void) {
     find_il2cpp_range();
     LOG("pump: libil2cpp exec range %p-%p", (void*)g_il_lo, (void*)g_il_hi);
@@ -3108,6 +3336,10 @@ static void* worker(void* _) {
         tc->o_parent = tc->f_parent ? field_off(tc->klass, tc->f_parent) : (size_t)-1;
         tc->o_shotspeed = tc->f_shotspeed ? field_off(tc->klass, tc->f_shotspeed) : (size_t)-1;
         tc->o_firerate  = tc->f_firerate  ? field_off(tc->klass, tc->f_firerate)  : (size_t)-1;
+        tc->o_direction = tc->f_direction ? field_off(tc->klass, tc->f_direction) : (size_t)-1;
+        tc->o_startdir  = tc->f_startdir  ? field_off(tc->klass, tc->f_startdir)  : (size_t)-1;
+        tc->o_offset    = tc->f_offset    ? field_off(tc->klass, tc->f_offset)    : (size_t)-1;
+        tc->o_rotoffset = tc->f_rotoffset ? field_off(tc->klass, tc->f_rotoffset) : (size_t)-1;
         LOG("class %-15s klass=%p proj=0x%zX walk=0x%zX hp=0x%zX parent=0x%zX shot=0x%zX fire=0x%zX",
             tc->cls, (void*)tc->klass, tc->o_proj, tc->o_walk, tc->o_health, tc->o_parent, tc->o_shotspeed, tc->o_firerate);
         snap_slot(tc->klass);   /* pre-register so the pump snapshots it from frame 1 */
@@ -3146,13 +3378,30 @@ static void* worker(void* _) {
             if (!tc->klass) continue;
             int n = enumerate(tc->klass);
             total += n;
+            int cann_hb = 0; (void)cann_hb;   /* periodic always-on cannon status */
 #ifdef NATIVEMOD_DEBUG
             if (n != tc->last_n) { LOG("enum %s: %d live", tc->cls, n); tc->last_n = n; }
             if (n > 0 && !g_scan_done) { g_scan_done = 1; debug_scan_projectiles(); }
 #endif
+            /* TEMP cannon diagnostic — ALWAYS on (CLOG) so a normal build shows it.
+             * Fires every ~300 pumps (~5 s) while a cannon is live. Remove when fixed. */
+            if (strcmp(tc->cls, "Cannon") == 0) {
+                static int cc = 0;
+                if ((cc++ % 300) == 0) { cann_hb = 1;
+                    CLOG("CANNON hb: %d live (ntunes=%d)", n, g_ntunes); }
+            }
             for (int i = 0; i < n; i++) {
                 Il2CppObject* e = g_found[i];
                 if (!unity_alive(e)) continue;   /* destroyed wrapper — never touch it */
+                if (cann_hb) {                    /* recompute + log this cannon's cell/match */
+                    int dcol = 0, drow = 0; char dcb[64] = "?";
+                    int ok = enemy_cell(e, tc, dcb, sizeof dcb, &dcol, &drow);
+                    const EnemyTune* dm = ok ? match_tune(dcb, dcol, drow) : NULL;
+                    CLOG("CANNON#%d cell: ok=%d chunk=%s col=%d row=%d proj=%s -> %s",
+                        i, ok, dcb, dcol, drow,
+                        (dm && dm->projectile) ? dm->projectile : "-",
+                        dm ? "MATCH" : "NO-TUNE");
+                }
 
                 int si = seen_index(e);
                 const EnemyTune* t;
