@@ -122,7 +122,7 @@ class Api:
             "character_names": __import__("core.sopatch", fromlist=["x"]).CHARACTER_NAMES,
             "vip_unlock": "vip_unlock" in self.project.patches,
             "grappling_hook": "grappling_hook" in self.project.patches,
-            "enforce_width": self.project.settings.get("enforce_width", True),
+            "enforce_width": self.project.settings.get("enforce_width", False),
             # global "fast spawn/fire rate" multiplier applied to every enemy's
             # cadence (spawnTimer / Cupid.pauseTime) via the native lib. 1 = off.
             "spawn_mult": self.project.settings.get("spawn_mult", 1),
@@ -986,6 +986,9 @@ class Api:
             # placed enemies), so reconciling them against enemies would wrongly
             # drop every cannon config. Keep a record if it's an enemy cell OR a
             # cannon record (has a direction).
+            # Cannon liveness is reconciled on the FRONTEND (painting over / erasing a
+            # cannon deletes its tuning immediately), so the incoming set is already
+            # clean — keep every cannon record; only enemy tunings reconcile here.
             is_cannon = rec.get("dir_x") not in (None, "") or rec.get("dir_y") not in (None, "")
             if not is_cannon and (sx, sy) not in cells:   # enemy no longer exists -> drop it
                 continue
@@ -1206,7 +1209,7 @@ class Api:
         render in a standard slot. Crops/pads to the nearest legal width. Covers
         edited chunks and any off-grid game chunk placed via an override. Gated by
         the project's `enforce_width` setting (default on)."""
-        if not proj.settings.get("enforce_width", True):
+        if not proj.settings.get("enforce_width", False):
             return proj
         from core.chunkfmt import Chunk, snap_width
         def fix(content):
@@ -1541,7 +1544,7 @@ class Api:
         if xml is None:
             return {"error": f"chunk {name} unavailable (load your .xapk first)"}
         c = Chunk.parse(xml)
-        if self.project.settings.get("enforce_width", True):   # edit at a legal width (14/28/42)
+        if self.project.settings.get("enforce_width", False):   # edit at a legal width (14/28/42)
             from core.chunkfmt import snap_width
             tgt = snap_width(c.w)
             if c.w != tgt:
@@ -1685,8 +1688,12 @@ class Api:
         # a non-default background ("bare") also needs the agent, so the Background
         # toggle works on its own — not only when music+bg keep-alive is on.
         bg_bare = (getattr(p, "bg_mode", "full") or "full") != "full"
-        return bool(p.keep_music_bg or p.smooth_camera or p.lock_camera_y
-                    or p.hide_timer or p.hide_progress or bg_bare)
+        # NOTE: smooth_camera / lock_camera_y are NOT listed here. The embedded native
+        # mod already applies them at playtest (camera_tick, via the p| flags), so the
+        # Frida agent is redundant for the camera — and attaching it clobbers the native
+        # pump (hook conflict), which stops the cannon logic. Only music/background need
+        # the agent, so trigger it just for those.
+        return bool(p.keep_music_bg or p.hide_timer or p.hide_progress or bg_bare)
 
     def _musicbg_agent_path(self):
         agent = os.path.join(os.path.dirname(os.path.dirname(__file__)),
@@ -1716,8 +1723,13 @@ class Api:
 
         mode = getattr(self.project, "bg_mode", None) or "full"
         keep = "on" if getattr(self.project, "keep_music_bg", False) else "off"
-        smooth = "on" if getattr(self.project, "smooth_camera", False) else "off"
-        lock_y = "on" if getattr(self.project, "lock_camera_y", False) else "off"
+        # Camera is driven by the NATIVE mod (camera_tick) at playtest — the agent must
+        # NOT install its own smooth/lock-Y camera hooks (Interceptor on GameCamera's
+        # CheckForSideRooms/FixedUpdate), because those collide with the native pump's
+        # GameCamera.LateUpdate hook and stop the cannon logic. So the agent stays OFF
+        # GameCamera's per-frame methods; it only handles music + background.
+        smooth = "off"
+        lock_y = "off"
         cap_top = "on" if getattr(self.project, "lock_y_cap_top", True) else "off"
         hide_t = "on" if getattr(self.project, "hide_timer", False) else "off"
         hide_p = "on" if getattr(self.project, "hide_progress", False) else "off"

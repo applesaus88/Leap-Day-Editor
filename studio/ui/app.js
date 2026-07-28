@@ -1102,15 +1102,17 @@ function draw(){
     const a=(focus||!state.onion)?1:0.35;
     drawLayer(layerGrid(L),a);
   }
-  // second grid: an ALIGNED copy of grid 1, drawn on top so items placed on it
-  // overlap the main tiles at the same cells.
+  // grid 1's firebars/cannons draw here — BEFORE grid 2 — so grid 2 sits over them.
+  drawFirebars(state.chunk.grid);
+  // second grid: an ALIGNED copy of grid 1, ALWAYS drawn on top at full opacity so
+  // items placed on it clearly overlap the main tiles (and grid-1 cannons) at the
+  // same cells (never faded by onion, even when another layer is focused).
   if(state.layerVis.grid2 && state.chunk.grid2){
-    const foc=state.layer==='grid2';
-    drawLayer(state.chunk.grid2, (foc||!state.onion)?1:0.35);
+    drawLayer(state.chunk.grid2, 1);
   }
+  drawFirebars(state.chunk.grid2);   // grid 2's own cannons, over grid 2's tiles
   drawAutotileMarks();
   drawObjects();
-  drawFirebars();
   drawRotationMarks();
   if(state.showGrid) drawGrid();
   drawSelection();
@@ -1158,14 +1160,14 @@ function drawFirebarThumb(cv){
     g.translate(cx+Math.cos(a)*u*0.3,cy+Math.sin(a)*u*0.3);g.rotate(a);g.fillRect(-u*0.06,-u*0.06,u*0.12,u*0.12);g.restore();}
   g.fillStyle='#9aa0ab';g.beginPath();g.arc(cx,cy,u*0.3,0,7);g.fill();
 }
-function drawFirebars(){
-  const fb=state.firebars; if(!fb)return;
-  for(const g of [state.chunk.grid, state.chunk.grid2]){ // grid 1 AND grid 2 (aligned overlay)
-    if(!g)continue;
-    for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
-      const tok=g[r]&&g[r][c]; if(!tok||tok==='-')continue;
-      const cfg=fb[splitTok(tok)[0]]; if(cfg)drawFirebarAt(c,r,cfg);
-    }
+// draw the firebar/cannon composites for ONE grid, so grid 1 and grid 2 can be
+// layered separately (grid 2's cannons must sit above grid 2's tiles, not above
+// everything). Called once per grid at the right point in the z-order.
+function drawFirebars(g){
+  const fb=state.firebars; if(!fb||!g)return;
+  for(let r=0;r<state.chunk.h;r++)for(let c=0;c<state.chunk.w;c++){
+    const tok=g[r]&&g[r][c]; if(!tok||tok==='-')continue;
+    const cfg=fb[splitTok(tok)[0]]; if(cfg)drawFirebarAt(c,r,cfg);
   }
 }
 // the firebar ball: the real tile_fire-2 sprite (a red ring; over the dark grid
@@ -1384,7 +1386,11 @@ function applyPaint(c,r){
     // a cannon painted with a brush carries its per-cell config (projectile / speed
     // / rate / firing direction) onto this exact cell — true per-block cannons.
     if(state.cannonBrush&&isCannonToken(tok)&&splitTok(tok)[0]===state.cannonBrush.token)
-      applyCannonBrush(c,r,state.cannonBrush.cfg);}
+      applyCannonBrush(c,r,state.cannonBrush.cfg);
+    else if(state.chunk&&state.enemyTuning){ // painted something else over the cell -> drop any stale cannon config
+      const k=etKey(c,r),rec=state.enemyTuning[k];
+      if(rec&&(rec.dir_x!=null||rec.dir_y!=null))delete state.enemyTuning[k];
+    }}
   else if(state.tool==='erase'){setCell(c,r,'-');if(state.chunk&&state.enemyTuning)delete state.enemyTuning[etKey(c,r)];}
 }
 // write a cannon's per-cell config into the tuning table the build/native use.
@@ -2087,8 +2093,9 @@ function renderThumb(destCv,d){
     offCtx.fillStyle=THEME_BG[(d.bg_color||0)%THEME_BG.length]||'#101018';
     offCtx.fillRect(0,0,CW,CH);
     for(const L of ['bg','active','fg']) drawLayer(layerGrid(L),1);
+    drawFirebars(state.chunk.grid);
+    if(state.chunk.grid2){drawLayer(state.chunk.grid2,1);drawFirebars(state.chunk.grid2);}
     (d.enemies||[]).forEach(e=>{const rec=sprites[e.properties]; if(rec&&rec.img) enemyBlit(rec,e.sx*CELL,e.sy*CELL);});
-    drawFirebars();
   }catch(err){}
   finally{ctx=sCtx;state.chunk=sChunk;state.view=sView;state.layer=sLayer;
     state.layerVis=sVis;state.onion=sOnion;state.showRot=sShowRot;}

@@ -233,7 +233,7 @@ def compile_so(config_text: str, libil2cpp_path: str, out_so: str,
 # are defined in core/native/nativemod.c (load_config()).
 CONFIG_MAGIC = bytes([0x4C, 0x44, 0x4E, 0x4D, 0xC0, 0xDE, 0xF1, 0x9E,
                       0x43, 0x46, 0x47, 0x42, 0x4C, 0x4F, 0x42, 0x7F])
-CONFIG_CAP = 65536
+CONFIG_CAP = 524288
 PREBUILT_DIR = os.path.join(NATIVE_DIR, "prebuilt")
 
 

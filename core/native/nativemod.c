@@ -79,7 +79,7 @@ typedef struct { const char* chunk; int col, row; } RespawnLink;
  * these instances to leftToRight=1 so they move the other way. */
 typedef struct { const char* chunk; int col, row; } GhostRCell;
 
-#define MAX_TUNES 512
+#define MAX_TUNES 4096
 #define MAX_BAKES 128
 #define MAX_RLINKS 64
 #define MAX_GRCELLS 64
@@ -96,7 +96,7 @@ static float g_axe_speed = 110.0f;
 static float g_axe_spin  = 900.0f;
 static float g_axe_hang  = 0.25f;   /* pause (seconds) at the far end before returning */
 
-#define CONFIG_CAP 65536
+#define CONFIG_CAP 524288
 static const unsigned char CONFIG_MAGIC[16] = {
     0x4C,0x44,0x4E,0x4D,0xC0,0xDE,0xF1,0x9E,0x43,0x46,0x47,0x42,0x4C,0x4F,0x42,0x7F };
 /* initialised with MAGIC (non-zero) so the whole array lands in .data (in-file),
@@ -418,6 +418,58 @@ static int obj_localscale(Il2CppObject* o, float* xyz) {
     Il2CppObject* boxed = invoke0(tr, "get_lossyScale"); if (!boxed) return 0;
     float* v = (float*)((char*)boxed + 0x10);
     xyz[0]=v[0]; xyz[1]=v[1]; xyz[2]=v[2]; return 1;
+}
+/* local scale (x,y,z) — the settable scale (get_lossyScale is read-only) */
+static int obj_get_localscale(Il2CppObject* o, float* xyz) {
+    Il2CppObject* tr = invoke0(o, "get_transform"); if (!tr) return 0;
+    Il2CppObject* boxed = invoke0(tr, "get_localScale"); if (!boxed) return 0;
+    float* v = (float*)((char*)boxed + 0x10);
+    xyz[0]=v[0]; xyz[1]=v[1]; xyz[2]=v[2]; return 1;
+}
+static int obj_set_localscale(Il2CppObject* o, float x, float y, float z) {
+    Il2CppObject* tr = invoke0(o, "get_transform"); if (!tr) return 0;
+    const MethodInfo* m = il2cpp_class_get_method_from_name(
+        il2cpp_object_get_class(tr), "set_localScale", 1);
+    if (!m) return 0;
+    float v[3] = { x, y, z };
+    void* args[1] = { v };
+    il2cpp_runtime_invoke(m, tr, args, NULL);
+    return 1;
+}
+/* set ONLY the transform's Z rotation, keeping its existing X/Y euler (so a sprite
+ * that bakes a flip/tilt into X or Y isn't zeroed -> no distortion/shrink). For
+ * non-Rigidbody2D objects (pooled cannon projectiles) whose rotation we own. */
+static int obj_set_zrot_keep(Il2CppObject* o, float deg) {
+    Il2CppObject* tr = invoke0(o, "get_transform"); if (!tr) return 0;
+    float ex = 0.0f, ey = 0.0f;
+    Il2CppObject* cur = invoke0(tr, "get_localEulerAngles");
+    if (cur) { float* v = (float*)((char*)cur + 0x10); ex = v[0]; ey = v[1]; }
+    const MethodInfo* m = il2cpp_class_get_method_from_name(
+        il2cpp_object_get_class(tr), "set_localEulerAngles", 1);
+    if (!m) return 0;
+    float v3[3] = { ex, ey, deg };
+    void* args[1] = { v3 };
+    il2cpp_runtime_invoke(m, tr, args, NULL);
+    return 1;
+}
+/* per-instance last position, so we can face a pooled projectile along its actual
+ * travel direction (no Rigidbody2D velocity to read). Keyed by object pointer. */
+#define NPTRK 256
+typedef struct { void* o; float x, y; } ProjTrack;
+static ProjTrack g_ptrk[NPTRK]; static int g_nptrk; static int g_ptrk_rr;
+static void proj_travel(void* o, float px, float py, float* dx, float* dy) {
+    *dx = 0.0f; *dy = 0.0f;
+    for (int i = 0; i < g_nptrk; i++) if (g_ptrk[i].o == o) {
+        *dx = px - g_ptrk[i].x; *dy = py - g_ptrk[i].y;
+        g_ptrk[i].x = px; g_ptrk[i].y = py; return;
+    }
+    /* not tracked yet — insert, evicting the OLDEST slot when full (ring buffer) so
+     * the table never permanently fills and stops tracking new shots. An evicted
+     * live projectile just re-baselines next frame (one frame of no rotation). */
+    int slot;
+    if (g_nptrk < NPTRK) slot = g_nptrk++;
+    else { slot = g_ptrk_rr; g_ptrk_rr = (g_ptrk_rr + 1) % NPTRK; }
+    g_ptrk[slot].o = o; g_ptrk[slot].x = px; g_ptrk[slot].y = py;
 }
 /* A UnityEngine.Object whose native peer has been destroyed still lingers as a
  * managed wrapper (FindObjectsOfTypeAll returns it), but its m_CachedPtr (the
@@ -2221,6 +2273,8 @@ static const MethodInfo* g_mSetVel;    /* Rigidbody2D.set_velocity(Vector2)     
 static const MethodInfo* g_mSetRot;    /* Rigidbody2D.set_rotation(float) — 2D Z angle  */
 static const MethodInfo* g_mGetCon;    /* Rigidbody2D.get_constraints() -> enum         */
 static const MethodInfo* g_mSetCon;    /* Rigidbody2D.set_constraints(enum)             */
+static const MethodInfo* g_mGetAng;    /* Rigidbody2D.get_angularVelocity() -> float    */
+static const MethodInfo* g_mSetAng;    /* Rigidbody2D.set_angularVelocity(float)        */
 
 static int class_has_bake(const char* cls) {
     for (int i = 0; i < g_nbakes; i++) if (strcmp(g_bakes[i].cls, cls) == 0) return 1;
@@ -2775,7 +2829,7 @@ static void rotate_bullets_pump(void) {
 
     /* 1. gather live cannon muzzle positions + firing directions + the names of the
      * projectile (m_Prefab) and the smoke puff (m_SmokePuff) each cannon uses. */
-    struct { float x, y, dx, dy; char proj[48], smoke[48]; } zn[64]; int nz = 0;
+    struct { float x, y, dx, dy, psx, psy, psz; char proj[48], smoke[48]; } zn[64]; int nz = 0;
     Il2CppObject* cty = il2cpp_type_get_object(il2cpp_class_get_type(ctc->klass));
     if (!cty) return;
     void* ca[1] = { cty };
@@ -2792,10 +2846,14 @@ static void rotate_bullets_pump(void) {
         if (dx == 0.0f && dy == 0.0f) continue;          /* no aim set */
         zn[nz].x = cp[0]; zn[nz].y = cp[1]; zn[nz].dx = dx; zn[nz].dy = dy;
         zn[nz].proj[0] = 0; zn[nz].smoke[0] = 0;
+        zn[nz].psx = zn[nz].psy = zn[nz].psz = 0.0f;
         if (ctc->o_proj != (size_t)-1) {
             Il2CppObject* pf = *(Il2CppObject**)((uint8_t*)cn + ctc->o_proj);
             if (unity_alive(pf)) { char pn[96]; obj_name(pf, pn, sizeof pn);
-                chunk_basename(pn, zn[nz].proj, sizeof zn[nz].proj); }
+                chunk_basename(pn, zn[nz].proj, sizeof zn[nz].proj);
+                float ps[3]; if (obj_get_localscale(pf, ps)) {   /* the intended bullet size */
+                    zn[nz].psx = ps[0]; zn[nz].psy = ps[1]; zn[nz].psz = ps[2]; }
+            }
         }
         if (o_smoke != (size_t)-1) {
             Il2CppObject* sm = *(Il2CppObject**)((uint8_t*)cn + o_smoke);
@@ -2809,6 +2867,131 @@ static void rotate_bullets_pump(void) {
     if (hb) for (int z = 0; z < nz; z++)
         CLOG("bulletrot cannon[%d] aim=(%.2f,%.2f) proj='%s' smoke='%s'",
              z, (double)zn[z].dx, (double)zn[z].dy, zn[z].proj, zn[z].smoke);
+    /* DIAG: are the cannon projectiles plain (non-Rigidbody2D) class instances? Count
+     * live ones + how many sit near a muzzle. If these show up but RBnear/clone don't,
+     * the fix is to rotate their transform directly (they're not physics bodies). */
+    if (hb) {
+        const char* pcls[3] = { "Fireball", "Barrel", "BouncyBullet" };
+        for (int ci = 0; ci < 3; ci++) {
+            Il2CppClass* k = find_class("", pcls[ci]);
+            if (!k) { CLOG("bulletrot DIAG %s: class NOT FOUND", pcls[ci]); continue; }
+            Il2CppObject* kt = il2cpp_type_get_object(il2cpp_class_get_type(k));
+            if (!kt) continue;
+            void* ka[1] = { kt };
+            Il2CppArray* ar = find_all_locked(g_findAll, ka);
+            if (!ar) continue;
+            uintptr_t al = *(uintptr_t*)((char*)ar + 0x18);
+            void** ai = (void**)((char*)ar + 0x20);
+            int tot = 0, nearm = 0;
+            for (uintptr_t j = 0; j < al; j++) {
+                Il2CppObject* o = (Il2CppObject*)ai[j];
+                if (!o || !unity_alive(o)) continue;
+                tot++;
+                float op[3]; if (!obj_position(o, op)) continue;
+                for (int z = 0; z < nz; z++) { float ex=op[0]-zn[z].x, ey=op[1]-zn[z].y;
+                    if (ex*ex+ey*ey < 120.0f*120.0f) { nearm++; break; } }
+            }
+            CLOG("bulletrot DIAG %s: %d live, %d near a muzzle", pcls[ci], tot, nearm);
+        }
+        /* Does each configured projectile have a class named after it? (tells us how to
+         * reach swapped-in shots like the snowball, which aren't physics bodies.) */
+        for (int z = 0; z < nz; z++) {
+            if (!zn[z].proj[0]) continue;
+            int seen = 0; for (int z2 = 0; z2 < z; z2++) if (!strcmp(zn[z2].proj, zn[z].proj)) { seen = 1; break; }
+            if (seen) continue;
+            CLOG("bulletrot PROJCLASS '%s': class=%s", zn[z].proj,
+                 find_class("", zn[z].proj) ? "EXISTS" : "none");
+        }
+    }
+
+    /* 2a. The default cannon projectiles (Fireball/Barrel/BouncyBullet) are pooled
+     * objects with NO Rigidbody2D — the physics path below never sees them. Enumerate
+     * them by class and face each along its ACTUAL travel direction (position delta
+     * between frames), rotating its transform. No velocity/aim/clone-name needed. */
+    {
+        static Il2CppClass* pk[4]; static int pkinit; static size_t o_going = (size_t)-2;
+        static const char* pnm[4] = { "Fireball", "Barrel", "BouncyBullet", "BigSnowball" };
+        static const int proller[4] = { 0, 0, 0, 1 };  /* BigSnowball rolls (animated, goingRight bool) */
+        if (!pkinit) { for (int i = 0; i < 4; i++) pk[i] = find_class("", pnm[i]); pkinit = 1; }
+        for (int ci = 0; ci < 4; ci++) {
+            if (!pk[ci]) continue;
+            if (proller[ci] && o_going == (size_t)-2) o_going = field_off(pk[ci], "goingRight");
+            Il2CppObject* kt = il2cpp_type_get_object(il2cpp_class_get_type(pk[ci]));
+            if (!kt) continue;
+            void* ka[1] = { kt };
+            Il2CppArray* ar = find_all_locked(g_findAll, ka);
+            if (!ar) continue;
+            uintptr_t al = *(uintptr_t*)((char*)ar + 0x18);
+            void** ai = (void**)((char*)ar + 0x20);
+            for (uintptr_t j = 0; j < al; j++) {
+                Il2CppObject* o = (Il2CppObject*)ai[j];
+                if (!o || !unity_alive(o)) continue;
+                float op[3]; if (!obj_position(o, op)) continue;
+                /* The game "aims" these bullets by SCALING them to the direction
+                 * vector: diagonal shots get scale ~(0.71,0.71) (shrunk) and leftward
+                 * shots get scale.x<0 (mirrored). Override EVERY frame with a flat
+                 * (1,1,1) so the sprite is always full size + un-mirrored. */
+                obj_set_localscale(o, 1.0f, 1.0f, 1.0f);
+                if (proller[ci]) {
+                    /* Rolling ball (snowball): it rolls via a sprite animation chosen by
+                     * its goingRight bool and moves horizontally — no transform facing.
+                     * While it's near a muzzle, set goingRight from that cannon's aim
+                     * (dx>0 = right / up-right / down-right; else left), so it rolls AND
+                     * travels the way the cannon points. */
+                    if (o_going != (size_t)-1) {
+                        int best = -1; float bd = 130.0f * 130.0f;
+                        for (int z = 0; z < nz; z++) { float ex=op[0]-zn[z].x, ey=op[1]-zn[z].y, d=ex*ex+ey*ey; if (d<bd){bd=d;best=z;} }
+                        if (best >= 0) {
+                            uint8_t want = (zn[best].dx > 0.0f) ? 1 : 0;
+                            *(uint8_t*)((uint8_t*)o + o_going) = want;
+                            if (hb) CLOG("bulletrot SNOWBALL goingRight=%d aimdx=%.2f", want, (double)zn[best].dx);
+                        }
+                    }
+                    continue;   /* rollers get no fixed facing */
+                }
+                float dx, dy; proj_travel(o, op[0], op[1], &dx, &dy);
+                float mag = sqrtf(dx*dx + dy*dy);
+                if (mag < 0.5f || mag > 80.0f) continue;   /* static/just-spawned, or a pool-reuse teleport: size fixed, aim later */
+                /* sprite art faces +X, so pure atan2 of the travel direction */
+                float deg = atan2f(dy, dx) * (180.0f / 3.14159265f);
+                obj_set_zrot_keep(o, deg);
+                if (hb) CLOG("bulletrot FACED %s -> %.0f deg (travel %.1f,%.1f)",
+                             pnm[ci], (double)deg, (double)dx, (double)dy);
+            }
+        }
+    }
+
+    /* 2b. GENERAL size fix — every shot object, regardless of class or physics. Any
+     * live GameObject whose name matches a cannon's configured projectile is a cannon
+     * shot; force it to (1,1,1) so the game's direction-scaling can't shrink diagonal
+     * shots or mirror them. Catches swapped-in projectiles (fish, snowball, …) with no
+     * class of their own. Throttled (scale is static) to keep the whole-scene scan cheap. */
+    {
+        static Il2CppObject* go_type; static int g_szrr;
+        if (((g_szrr++) & 3) == 0) {          /* ~every 4th call */
+            if (!go_type) { Il2CppClass* goC = find_class("UnityEngine", "GameObject");
+                if (goC) go_type = il2cpp_type_get_object(il2cpp_class_get_type(goC)); }
+            if (go_type) {
+                void* ga[1] = { go_type };
+                Il2CppArray* garr = find_all_locked(g_findAll, ga);
+                if (garr) {
+                    uintptr_t gl = *(uintptr_t*)((char*)garr + 0x18);
+                    void** gi = (void**)((char*)garr + 0x20);
+                    for (uintptr_t j = 0; j < gl; j++) {
+                        Il2CppObject* go = (Il2CppObject*)gi[j];
+                        if (!go || !unity_alive(go)) continue;
+                        char nm[64], bs[64]; obj_name(go, nm, sizeof nm);
+                        if (!nm[0]) continue;
+                        chunk_basename(nm, bs, sizeof bs);
+                        for (int z = 0; z < nz; z++)
+                            if (zn[z].proj[0] && strcmp(bs, zn[z].proj) == 0) {
+                                obj_set_localscale(go, 1.0f, 1.0f, 1.0f); break;
+                            }
+                    }
+                }
+            }
+        }
+    }
 
     /* 2. rotate clone projectiles sitting at a cannon muzzle to that cannon's aim */
     if (!g_rbClass) g_rbClass = find_class("UnityEngine", "Rigidbody2D");
@@ -2819,6 +3002,8 @@ static void rotate_bullets_pump(void) {
     if (!g_mSetVel) g_mSetVel = il2cpp_class_get_method_from_name(g_rbClass, "set_velocity", 1);
     if (!g_mGetCon) g_mGetCon = il2cpp_class_get_method_from_name(g_rbClass, "get_constraints", 0);
     if (!g_mSetCon) g_mSetCon = il2cpp_class_get_method_from_name(g_rbClass, "set_constraints", 1);
+    if (!g_mGetAng) g_mGetAng = il2cpp_class_get_method_from_name(g_rbClass, "get_angularVelocity", 0);
+    if (!g_mSetAng) g_mSetAng = il2cpp_class_get_method_from_name(g_rbClass, "set_angularVelocity", 1);
     Il2CppObject* rty = il2cpp_type_get_object(il2cpp_class_get_type(g_rbClass));
     if (!rty) return;
     void* ra[1] = { rty };
@@ -2832,68 +3017,83 @@ static void rotate_bullets_pump(void) {
         Il2CppObject* go = invoke0(rb, "get_gameObject");
         if (!unity_alive(go)) continue;
         char full[96]; obj_name(go, full, sizeof full);
-        if (!strstr(full, "(Clone)")) continue;          /* only live shots */
-        char base[48]; chunk_basename(full, base, sizeof base);  /* strips " (Clone)" */
         float p[3]; if (!obj_position(go, p)) continue;
-        /* log any clone loitering near a muzzle: its name + on-screen size, so we can
-         * see what the projectile actually is and why it looks small. */
-        if (hb) {
-            int nearAny = -1; float ba = 64.0f * 64.0f;
-            for (int z = 0; z < nz; z++) { float ex=p[0]-zn[z].x, ey=p[1]-zn[z].y, d=ex*ex+ey*ey; if (d<ba){ba=d;nearAny=z;} }
-            if (nearAny >= 0) { float sc[3]={1,1,1}; obj_localscale(go, sc);
-                CLOG("bulletrot clone '%s' scale=(%.2f,%.2f) d=%.0f nearProj='%s'",
-                     base, (double)sc[0], (double)sc[1], (double)sqrtf(ba), zn[nearAny].proj); }
+        /* DIAG: any Rigidbody2D near a muzzle, RAW name — deduped by name (logged once
+         * each), so transient shots can't slip through the time-sampling. Tells us if
+         * the projectile is a physics body at all and exactly how it's named. */
+        {
+            int na = -1; float ba = 90.0f * 90.0f;
+            for (int z = 0; z < nz; z++) { float ex=p[0]-zn[z].x, ey=p[1]-zn[z].y, d=ex*ex+ey*ey; if (d<ba){ba=d;na=z;} }
+            if (na >= 0) {
+                static char g_rbseen[64][64]; static int g_nrbseen;
+                int known = 0; for (int s = 0; s < g_nrbseen; s++) if (!strcmp(g_rbseen[s], full)) { known = 1; break; }
+                if (!known && g_nrbseen < 64) { strncpy(g_rbseen[g_nrbseen], full, 63); g_rbseen[g_nrbseen][63] = 0; g_nrbseen++;
+                    CLOG("bulletrot RBnear '%s' d=%.0f", full, (double)sqrtf(ba)); }
+            }
         }
-        /* nearest cannon muzzle — but NEVER the smoke puff (rotating/re-aiming that is
-         * what wrecked the puffs). Any other clone at the muzzle is the real shot. */
-        int best = -1; float bd = 40.0f * 40.0f;         /* within ~2.5 tiles of a muzzle */
+        char base[48]; chunk_basename(full, base, sizeof base);  /* strips " (Clone)" if present */
+        /* Match to the nearest cannon whose PROJECTILE this is, by name. No "(Clone)"
+         * requirement — swapped-in shots (fish/snowball) are POOLED (reused, not named
+         * "(Clone)"), which is why they slipped through before. */
+        int best = -1; float bd = 60.0f * 60.0f;
         for (int z = 0; z < nz; z++) {
-            if (zn[z].smoke[0] && strcmp(base, zn[z].smoke) == 0) continue;  /* it's the smoke puff */
+            if (!zn[z].proj[0] || strcmp(base, zn[z].proj) != 0) continue;   /* this cannon's projectile only */
             float ddx = p[0]-zn[z].x, ddy = p[1]-zn[z].y, d = ddx*ddx + ddy*ddy;
             if (d < bd) { bd = d; best = z; }
         }
-        if (best < 0) continue;                          /* not a cannon shot at a muzzle */
+        if (best < 0) continue;                          /* not a cannon shot near a muzzle */
+        if (hb) { float sc0[3]={1,1,1}; obj_localscale(go, sc0);
+            CLOG("bulletrot PHYS '%s' scale=(%.2f,%.2f) prefab=(%.2f,%.2f)",
+                 base, (double)sc0[0], (double)sc0[1], (double)zn[best].psx, (double)zn[best].psy); }
         float ax = zn[best].dx, ay = zn[best].dy;        /* the cannon's aim */
         float al = sqrtf(ax*ax + ay*ay); if (al > 0.001f) { ax /= al; ay /= al; }
-        /* Some projectiles (e.g. the WoolyTrunky snowball, authored to fly LEFT)
-         * keep their own initial velocity and ignore the cannon's m_Direction, so
-         * they fly the wrong way. If a fresh shot is moving AGAINST the aim, re-aim
-         * it (same speed) so the cannon's direction is authoritative. Only flips
-         * clearly-wrong shots (dot < 0) — correctly-aimed/arcing shots are left be. */
-        if (g_mGetVel && g_mSetVel) {
-            Il2CppObject* bv = il2cpp_runtime_invoke(g_mGetVel, rb, NULL, NULL);
-            if (bv) {
-                float* vv = (float*)((char*)bv + 0x10);
-                float vx = vv[0], vy = vv[1], mag = sqrtf(vx*vx + vy*vy);
-                if (mag > 0.01f && (vx*ax + vy*ay) < 0.0f) {
-                    float nv[2] = { ax*mag, ay*mag }; void* va[1] = { nv };
-                    il2cpp_runtime_invoke(g_mSetVel, rb, va, NULL);
-                }
-            }
+        /* Read velocity + spin. A fast spin = a ROLLING projectile (snowball); those
+         * should keep rolling, never take a fixed facing. */
+        float vx = 0, vy = 0, mag = 0, av = 0; int rolling = 0;
+        if (g_mGetVel) { Il2CppObject* bv = il2cpp_runtime_invoke(g_mGetVel, rb, NULL, NULL);
+            if (bv) { float* vv = (float*)((char*)bv + 0x10); vx = vv[0]; vy = vv[1]; mag = sqrtf(vx*vx+vy*vy); } }
+        if (g_mGetAng) { Il2CppObject* ab = il2cpp_runtime_invoke(g_mGetAng, rb, NULL, NULL);
+            if (ab) av = *(float*)((char*)ab + 0x10); }
+        if (fabsf(av) > 20.0f) rolling = 1;
+        /* If the shot flies AGAINST the cannon aim (e.g. the snowball, thrown left by
+         * default), re-aim it so the cannon's direction wins. */
+        if (g_mSetVel && mag > 0.01f && (vx*ax + vy*ay) < 0.0f) {
+            float nv[2] = { ax*mag, ay*mag }; void* va[1] = { nv };
+            il2cpp_runtime_invoke(g_mSetVel, rb, va, NULL);
+            vx = ax*mag; vy = ay*mag;
         }
-        /* The bullet (e.g. BouncyBullet) freezes its Z rotation, so set_rotation is
-         * ignored by the physics engine — clear the FreezeRotation bit so our angle
-         * sticks. No torque acts on a bullet in flight, so it won't tumble. */
+        /* Clear FreezeRotation so a fixed facing can take (bullets freeze it). */
         if (g_mGetCon && g_mSetCon) {
             Il2CppObject* cb = il2cpp_runtime_invoke(g_mGetCon, rb, NULL, NULL);
-            if (cb) {
-                int con = *(int*)((char*)cb + 0x10);
-                if (con & 4) { con &= ~4;             /* RigidbodyConstraints2D.FreezeRotation */
-                    void* ca2[1] = { &con };
-                    il2cpp_runtime_invoke(g_mSetCon, rb, ca2, NULL);
-                }
-            }
+            if (cb) { int con = *(int*)((char*)cb + 0x10);
+                if (con & 4) { con &= ~4; void* ca2[1] = { &con }; il2cpp_runtime_invoke(g_mSetCon, rb, ca2, NULL); } }
         }
-        /* The game faces the bullet by MIRRORING it left/right (scale.x < 0 for a
-         * leftward shot), not by rotating. A mirrored sprite's forward is -X, so add
-         * 180° to keep the nose pointing along the aim for every direction. */
-        float deg = atan2f(ay, ax) * (180.0f / 3.14159265f);
-        float sc[3] = {1,1,1}; obj_localscale(go, sc);
-        if (sc[0] < 0.0f) deg += 180.0f;
-        void* ra1[1] = { &deg };
-        il2cpp_runtime_invoke(g_mSetRot, rb, ra1, NULL);
-        if (hb) CLOG("bulletrot ROTATED '%s' -> %.0f deg (aim %.2f,%.2f, scaleX %.2f)",
-                     base, (double)deg, (double)ax, (double)ay, (double)sc[0]);
+        /* Force scale to a flat (1,1,1) — every projectile, full size, never mirrored
+         * or direction-shrunk (the game scales diagonal shots to ~0.71). */
+        obj_set_localscale(go, 1.0f, 1.0f, 1.0f);
+        if (rolling) {
+            /* Rolling ball: no fixed facing — set the SPIN from the cannon's AIM.
+             * right / up-right / down-right (aim.dx > 0) roll RIGHT = clockwise =
+             * negative angularVelocity; every other direction rolls the other way. */
+            if (g_mSetAng) {
+                float sp = fabsf(av); if (sp < 1.0f) sp = 300.0f;   /* keep spinning even if it wasn't */
+                float want = (zn[best].dx > 0.0f) ? -sp : sp;
+                if (want != av) { void* aa[1] = { &want }; il2cpp_runtime_invoke(g_mSetAng, rb, aa, NULL); }
+            }
+            if (hb) CLOG("bulletrot ROLL '%s' aimdx=%.2f av=%.0f", base, (double)zn[best].dx, (double)av);
+        } else {
+            /* Flying shot: face it along its ACTUAL travel (movement delta), aim on the
+             * spawn frame. Sprite art faces +X, so pure atan2. */
+            float tdx, tdy; proj_travel(go, p[0], p[1], &tdx, &tdy);
+            float tmag = sqrtf(tdx*tdx + tdy*tdy);
+            float deg = (tmag > 0.3f && tmag < 80.0f)
+                        ? atan2f(tdy, tdx) * (180.0f / 3.14159265f)
+                        : atan2f(ay, ax) * (180.0f / 3.14159265f);
+            void* ra1[1] = { &deg };
+            il2cpp_runtime_invoke(g_mSetRot, rb, ra1, NULL);
+            if (hb) CLOG("bulletrot ROTATED '%s' -> %.0f deg (travel %.1f,%.1f)",
+                         base, (double)deg, (double)tdx, (double)tdy);
+        }
     }
 }
 

@@ -266,8 +266,12 @@
           <label class="setrow power-only" title="Respawn flags: every Respawn Flag you place (from the element palette) becomes a touch-to-save checkpoint at Playtest — walk into it to set your respawn (open→flap flag animation, chunk-relative respawn, no missile). Applied via the on-device cannon→checkpoint agent. Placing a flag turns this on automatically."><input type="checkbox" id="respawnFlags"/> <span>Respawn flags</span></label>
         </section>
 
-        <!-- kept functional with their defaults, but no visible control -->
-        <input type="checkbox" id="enforceWidth" checked hidden>
+        <section class="setgroup">
+          <h4>Level size</h4>
+          <label class="setrow" title="Snap every chunk's width to the game's official sizes: 14 = 1 screen, 28 = 2 screens, 42 = 3 screens. Turn OFF to make wider sections (e.g. 90). NOTE: the base game only ships 14/28/42-wide rooms, so wider widths are experimental and may not scroll/render correctly in a stock build — playtest to check."><input type="checkbox" id="enforceWidth"/> <span>Lock width to 14 / 28 / 42</span></label>
+        </section>
+
+        <!-- kept functional with its default, but no visible control -->
         <input type="number" id="spawnMult" hidden>
 
         <section class="setgroup">
