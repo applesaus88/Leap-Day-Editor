@@ -113,6 +113,7 @@ class Api:
             "edited_levels": sorted(self.project.levels.keys()),
             "library": sorted(self.project.library.keys()),
             "force_date": self.project.force_date,
+            "live_date": self.project.live_date,
             "force_theme": self.project.force_theme,
             "force_character": self.project.force_character,
             "checkpoint_fruit_cost": self.project.checkpoint_fruit_cost,
@@ -402,7 +403,8 @@ class Api:
             days.append({"date": date, "editable": len(v["editable"]),
                          "exclusive": len(v["exclusive"]), "edited": edited})
         days.sort(key=lambda d: d["date"])
-        return {"days": days, "force_date": self.project.force_date}
+        return {"days": days, "force_date": self.project.force_date,
+                "live_date": self.project.live_date}
 
     def get_day_chunks(self, date):
         """The chunks a given date loads — exclusive (only this day) first —
@@ -415,14 +417,30 @@ class Api:
                    "edited": c in self.project.levels} for c in v["editable"]]
         chunks.sort(key=lambda x: (not x["exclusive"], x["name"]))
         return {"date": date, "force_date": self.project.force_date,
+                "live_date": self.project.live_date,
                 "chunks": chunks, "shared": self._jan.get("_shared", [])}
 
     def lock_date(self, date):
         """Lock the build to always load `date` (force_date) and ensure VIP is
         unlocked so popups don't interrupt. Pass '' to clear the lock."""
         self.project.force_date = date or None
-        if date and "vip_unlock" not in self.project.patches:
-            self.project.patches.append("vip_unlock")
+        if date:
+            self.project.live_date = False        # a fixed lock overrides live mode
+            if "vip_unlock" not in self.project.patches:
+                self.project.patches.append("vip_unlock")
+        return self.get_state()
+
+    def set_live_date(self, on):
+        """Live-date mode: the build follows the real device clock, so the game
+        always loads whatever the current day actually is (the level changes each
+        real day). Turning it on clears any fixed date lock — the two are mutually
+        exclusive — and drops any forced theme (a forced theme pins one day)."""
+        self.project.live_date = bool(on)
+        if self.project.live_date:
+            self.project.force_date = None
+            self.project.force_theme = None
+            if "vip_unlock" not in self.project.patches:
+                self.project.patches.append("vip_unlock")
         return self.get_state()
 
     # ---- theme (background atmosphere) -----------------------------------
@@ -1888,7 +1906,9 @@ class Api:
                     apkbuild.launch()
             else:
                 apkbuild.launch()
-            tip = f"loaded {proj.force_date}" if proj.force_date else "launched"
+            tip = (f"loaded {proj.force_date}" if proj.force_date
+                   else "live — today's real date" if self.project.live_date
+                   else "launched")
             logs.append(f"[playtest] {tip} — your edits are live (tap to play)")
             res = {"ok": True, "log": logs, "force_date": proj.force_date,
                    "levels": summary.get("levels_applied")}
@@ -2016,7 +2036,9 @@ class Api:
             out = os.path.join(BUILD_DIR, "playtest")
             summary = playtest.playtest_sequence(
                 self.xapk_path, names, self.project, self.bundle, self._catalog,
-                out, scope=scope, first_at_bottom=first_at_bottom, log=logs.append)
+                out, scope=scope, first_at_bottom=first_at_bottom,
+                force_date=(None if self.project.live_date else playtest.TEST_DATE),
+                log=logs.append)
             return {"ok": True, "log": logs, "flooded": summary.get("flooded"),
                     "sequence": names}
         except Exception as e:

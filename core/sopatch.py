@@ -90,6 +90,21 @@ PATCHES: dict[str, list[Patch]] = {
         # window that still hides some chars; force true so EVERY character shows.
         Patch("vip_unlock:CanShowCharacterByIndex", 0x1454DB8, bytes.fromhex("fe0f1ef8"),
               RET_TRUE, "CharacterSelector.CanShowCharacterByIndex(int) -> true (show ALL)"),
+        # ROSTER gate (the real reason VIP chars were INVISIBLE, not just locked):
+        # the selector only scrolls CharacterManager.unlockedCharacters +
+        # lockedCharacters (GetCharactersLastIndex = their combined count). Those
+        # lists are populated from PlayerPrefs by loadUnlocked/loadLockedCharacters,
+        # which call ShouldCharacterBeLoadedFromPlayerPrefs(id) and SKIP any id where
+        # it's false. That function returns !CharacterPack.isSpecialCharacter, so every
+        # VIP/special character (Lick, Yolk pets, subscription chars…) is excluded from
+        # the roster entirely — the show-gates above never get a chance because the
+        # scroll never reaches those indices. Force it true so specials load into the
+        # roster too. (The first-run seed convertOldVersionCharactersToNewSystem adds
+        # ALL packs incl. specials, so they ARE in prefs; this stops the load-time drop.
+        # A save that ran WITHOUT this patch may have pruned specials from prefs, so a
+        # one-time data-clear/fresh install re-seeds them — after that it's self-sustaining.)
+        Patch("vip_unlock:ShouldCharacterBeLoadedFromPlayerPrefs", 0x145027C, bytes.fromhex("fe0f1ff8"),
+              RET_TRUE, "CharacterManager.ShouldCharacterBeLoadedFromPlayerPrefs(int) -> true (VIP/special chars enter the selector roster)"),
         # NOTE: do NOT patch isCharacterAlreadyAddedToUnlocked() true — it's used
         # while BUILDING the selector list (dup guard); forcing true makes the game
         # think every char is already added, so it adds none and the list empties

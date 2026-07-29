@@ -29,7 +29,8 @@ from core.project import Project
 from core import modbuild, apkbuild
 
 
-def run_build(xapk: str, mod: str, out_dir: str, install: bool, log):
+def run_build(xapk: str, mod: str, out_dir: str, install: bool, log,
+              *, clone_package: bool = True, strip_store: bool = True):
     proj = Project.load(mod)
     log(f"Mod: {proj.name}")
     log(f"  custom levels: {len(proj.levels)}")

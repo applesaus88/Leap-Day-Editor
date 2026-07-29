@@ -1,5 +1,9 @@
 # Runtime deps for the standalone level-editor patcher.
-# (No capstone / TypeTreeGeneratorAPI: this tool edits text levels only and has
-#  no ability to disassemble or modify compiled code / serialized fields.)
+# TypeTreeGeneratorAPI is required: modbuild generates a Level/MonoBehaviour type
+# tree for any mod carrying custom levels (allow-all-elements, ordered lists,
+# firebars, element overrides, flag-checkpoints). Without it the frozen app
+# crashes on import (ModuleNotFoundError: No module named 'TypeTreeGeneratorAPI').
 UnityPy==1.25.0
+TypeTreeGeneratorAPI==0.0.10
+lief==0.17.6
 pyinstaller==6.20.0

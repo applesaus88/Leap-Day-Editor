@@ -61,6 +61,7 @@ class Project:
     overrides: dict[str, list[str]] = field(default_factory=dict)  # Level field -> list
     patches: list[str] = field(default_factory=list)            # .so patch names
     force_date: str | None = None                               # 'YYYY-MM-DD' to lock the daily level
+    live_date: bool = False                                     # follow the real device clock: the build always loads whatever the current day is (no frozen date). Mutually exclusive with force_date.
     force_theme: int | None = None                              # preset theme index to force on the locked day
     force_character: int | None = None                          # character id to force the player to play as (CharacterManager id)
     checkpoint_fruit_cost: int | None = None                    # fruits every checkpoint costs to unlock (stock 20); None = leave default. .so patch, global.
@@ -102,6 +103,7 @@ class Project:
             overrides=data.get("overrides", {}),
             patches=data.get("patches", []),
             force_date=data.get("force_date"),
+            live_date=data.get("live_date", False),
             force_theme=data.get("force_theme"),
             force_character=data.get("force_character"),
             checkpoint_fruit_cost=data.get("checkpoint_fruit_cost"),
@@ -130,7 +132,8 @@ class Project:
         # `library` alone doesn't count — custom chunks only affect a build once a
         # day_order references them; an unused library shouldn't make a build.
         return not (self.levels or self.overrides or self.patches
-                    or self.force_date or self.force_theme or self.day_orders
+                    or self.force_date or self.live_date
+                    or self.force_theme or self.day_orders
                     or self.firebars or self.element_overrides
                     or self.enemy_tuning
                     or self.force_character is not None

@@ -2019,9 +2019,18 @@ function syncMeta(){const c=state.chunk;$('#metaW').value=c.w;$('#metaH').value=
 function syncPaletteSel(){$$('#tilePalette .swatch').forEach(s=>s.classList.toggle('sel',s.dataset.name===state.selTile));}
 
 // ---------- by-date authoring (ordered level shaping) ----------
-let dayState=null; // {date, rows, order, slots, force_date}
+let dayState=null; // {date, rows, order, slots, force_date, live_date}
+// Reflect live-date mode across the date panel: tick the box, and when live is on
+// the fixed Lock button is irrelevant (the build follows the real clock), so grey it.
+function reflectLiveDate(on){
+  const cb=$('#liveDate');if(cb)cb.checked=!!on;
+  const lock=document.querySelector('[data-act="lockDate"]');
+  if(lock){lock.disabled=!!on;lock.style.opacity=on?0.4:'';
+    lock.title=on?'Off — live mode follows the real date (untick “Use today’s real date”)':'Make the game ALWAYS load this day’s level';}
+}
 async function refreshCalendar(){
   const cal=await api().get_calendar();
+  reflectLiveDate(!!cal.live_date);
   const sel=$('#dateSel');sel.innerHTML='';
   (cal.days||[]).forEach(d=>{const o=document.createElement('option');o.value=d.date;
     const lock=cal.force_date===d.date?'':'';
@@ -2060,8 +2069,10 @@ function applyDay(r){
   const themeTxt=r.force_theme!=null
     ? `<b>${themeLabel(r.force_theme)}</b> (forced)`
     : (r.native_theme!=null?`${themeLabel(r.native_theme)}`:'theme not captured');
-  $('#dateInfo').innerHTML=`${gp.length} sections · <b>${ed} edited</b> · ${del} emptied · ${themeTxt}`
-    +(locked?' · <b style="color:#7fd17f">builds this day</b>':' · <i>not locked — press </i>');
+  const live=$('#liveDate')&&$('#liveDate').checked;
+  const buildTxt=live?' · <b style="color:#7fd17f">🕒 builds live (today’s real date)</b>'
+    :locked?' · <b style="color:#7fd17f">builds this day</b>':' · <i>not locked — press </i>';
+  $('#dateInfo').innerHTML=`${gp.length} sections · <b>${ed} edited</b> · ${del} emptied · ${themeTxt}`+buildTxt;
   renderDaySeq();
   if(dayState&&dayState.date)loadDayThumbs(dayState.date); // filmstrip thumbnails (async)
 }
@@ -2517,11 +2528,12 @@ const ACTIONS={
     applyDay(r);updateEdited((await api().get_state()).edited_levels);
     setStatus('⟲ '+d+' restored to original — cleared '+((r.removed_edits||[]).length)+' edit(s)');},
   async playtestDay(){if(!dayState){setStatus('pick a date first',true);return;}
-    await api().lock_date(dayState.date);
-    setStatus('building '+dayState.date+' → installing → launching… (can take ~30s)');
+    const live=$('#liveDate')&&$('#liveDate').checked;
+    if(!live)await api().lock_date(dayState.date);   // live mode follows the real clock — don't freeze a date
+    setStatus((live?'building LIVE (today’s real date)':'building '+dayState.date)+' → installing → launching… (can take ~30s)');
     const r=await api().playtest(null);
     if(r.error){setStatus('playtest failed: '+r.error,true);$('#logOut').textContent=(r.log||[]).join('\n')+'\n\nERROR: '+r.error;$('#logModal').classList.remove('hidden');}
-    else{setStatus('▶ playing '+(r.force_date||dayState.date)+' on the emulator');await refreshCalendar();}},
+    else{setStatus('▶ playing '+(r.force_date||(live?'today’s real date (live)':dayState.date))+' on the emulator');await refreshCalendar();}},
   async viewFullLevel(){const d=$('#dateSel').value;if(!d){setStatus('pick a date first',true);return;}
     setStatus('assembling the whole level…');
     const r=await api().preview_day(d);
@@ -2669,6 +2681,7 @@ function buildForceChar(names,cur){
   ensureCharPortraits().then(()=>renderCharGrid('forceCharGrid','forceChar','forceCharCur',names,cur));
 }
 function applyState(st){$('#projName').value=st.project_name||'';updateEdited(st.edited_levels);refreshLibrary();
+  if(st.live_date!==undefined)reflectLiveDate(!!st.live_date);
   if(st.enforce_width!==undefined)$('#enforceWidth').checked=!!st.enforce_width;
   if(st.spawn_mult!==undefined)$('#spawnMult').value=(Number(st.spawn_mult)>1?st.spawn_mult:'');
   if(st.grappling_hook!==undefined)$('#grapplingHook').checked=!!st.grappling_hook;
@@ -2736,6 +2749,10 @@ function wire(){
   $('#activeOnly')?.addEventListener('change',refreshChunkList);
   $('#enforceWidth').onchange=async e=>{await api().set_setting('enforce_width',e.target.checked);
     setStatus(e.target.checked?'width lock ON — chunks snap to 14/28/42':'width lock OFF');};
+  $('#liveDate')?.addEventListener('change',async e=>{
+    await api().set_live_date(e.target.checked);
+    setStatus(e.target.checked?'🕒 live date ON — the build loads whatever day it actually is (lock cleared)':'live date OFF');
+    await refreshCalendar();});
   $('#spawnMult').onchange=async e=>{let v=parseFloat(e.target.value);
     if(!isFinite(v)||v<1)v=1; if(v>100)v=100;
     e.target.value=(v>1?v:'');
