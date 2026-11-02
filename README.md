@@ -1,7 +1,5 @@
 # Leap Day Editor
 
-Alpha. Most things work (~95%), and I'm still smoothing out the rest.
-
 A desktop level editor for the mobile game Leap Day. You build custom levels and
 share them without ever handing out the game itself.
 
@@ -206,8 +204,7 @@ vendor/  uber-apk-signer.jar
 ## AI disclosure
 
 Claude has been used to debug code. 95% of the code is written by a human. Claude
-did help a lot with writing/translating the documentation and the comments since
-English isn't my first language.
+did help a lot with writing/translating the documentation and the comments
 
 ## Disclaimer
 
